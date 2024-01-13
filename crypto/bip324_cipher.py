@@ -414,6 +414,28 @@ def ellswift_ecdh_xonly(pubkey_theirs, privkey):
     return (d * GE.lift_x(xswiftec(u, t))).x.to_bytes()
 
 
+import hashlib
+import hmac
+
+
+def hmac_sha256(key, data):
+    """Compute HMAC-SHA256 from specified byte arrays key and data."""
+    return hmac.new(key, data, hashlib.sha256).digest()
+
+
+def hkdf_sha256(length, ikm, salt, info):
+    """Derive a key using HKDF-SHA256."""
+    if len(salt) == 0:
+        salt = bytes([0] * 32)
+    prk = hmac_sha256(salt, ikm)
+    t = b""
+    okm = b""
+    for i in range((length + 32 - 1) // 32):
+        t = hmac_sha256(prk, t + info + bytes([i + 1]))
+        okm += t
+    return okm[:length]
+
+
 CHACHA20_INDICES = (
     (0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
     (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)
