@@ -11,7 +11,24 @@ WARNING: This code is slow and trivially vulnerable to side channel attacks. Do 
 anything but tests.
 """
 from .chacha20 import chacha20_block, REKEY_INTERVAL
-from .poly1305 import Poly1305
+
+
+class Poly1305:
+    """Class representing a running poly1305 computation."""
+    MODULUS = 2**130 - 5
+
+    def __init__(self, key):
+        self.r = int.from_bytes(key[:16], 'little') & 0xffffffc0ffffffc0ffffffc0fffffff
+        self.s = int.from_bytes(key[16:], 'little')
+
+    def tag(self, data):
+        """Compute the poly1305 tag."""
+        acc, length = 0, len(data)
+        for i in range((length + 15) // 16):
+            chunk = data[i * 16:min(length, (i + 1) * 16)]
+            val = int.from_bytes(chunk, 'little') + 256**len(chunk)
+            acc = (self.r * (acc + val)) % Poly1305.MODULUS
+        return ((acc + self.s) & 0xffffffffffffffffffffffffffffffff).to_bytes(16, 'little')
 
 
 def pad16(x):
