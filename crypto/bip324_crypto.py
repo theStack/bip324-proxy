@@ -10,6 +10,10 @@ It is designed for ease of understanding, not performance.
 WARNING: This code is slow and trivially vulnerable to side channel attacks. Do not use for
 anything but tests.
 """
+import hashlib
+import hmac
+
+
 #################
 ### secp256k1 ###
 #################
@@ -423,10 +427,6 @@ def ellswift_ecdh_xonly(pubkey_theirs, privkey):
 ############
 ### hkdf ###
 ############
-import hashlib
-import hmac
-
-
 def hmac_sha256(key, data):
     """Compute HMAC-SHA256 from specified byte arrays key and data."""
     return hmac.new(key, data, hashlib.sha256).digest()
@@ -547,6 +547,26 @@ class Poly1305:
             val = int.from_bytes(chunk, 'little') + 256**len(chunk)
             acc = (self.r * (acc + val)) % Poly1305.MODULUS
         return ((acc + self.s) & 0xffffffffffffffffffffffffffffffff).to_bytes(16, 'little')
+
+
+###################
+### bip324_ecdh ###
+###################
+def TaggedHash(tag, data):
+    ss = hashlib.sha256(tag.encode('utf-8')).digest()
+    ss += ss
+    ss += data
+    return hashlib.sha256(ss).digest()
+
+
+def bip324_ecdh(priv, ellswift_theirs, ellswift_ours, initiating):
+    ecdh_point_x32 = ellswift_ecdh_xonly(ellswift_theirs, priv)
+    if initiating:
+        # Initiating, place our public key encoding first.
+        return TaggedHash("bip324_ellswift_xonly_ecdh", ellswift_ours + ellswift_theirs + ecdh_point_x32)
+    else:
+        # Responding, place their public key encoding first.
+        return TaggedHash("bip324_ellswift_xonly_ecdh", ellswift_theirs + ellswift_ours + ecdh_point_x32)
 
 
 #####################
