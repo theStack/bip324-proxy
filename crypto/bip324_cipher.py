@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-# Copyright (c) 2022 The Bitcoin Core developers
+# Copyright (c) 2024 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-"""Test-only implementation of ChaCha20 Poly1305 AEAD Construction in RFC 8439 and FSChaCha20Poly1305 for BIP 324
+"""Test-only single-module implementation of BIP 324
 
 It is designed for ease of understanding, not performance.
 
 WARNING: This code is slow and trivially vulnerable to side channel attacks. Do not use for
 anything but tests.
 """
+#################
+### secp256k1 ###
+#################
 class FE:
     """Objects of this class represent elements of the field GF(2**256 - 2**32 - 977).
 
@@ -340,6 +343,9 @@ class FastGEMul:
 FAST_G = FastGEMul(G)
 
 
+################
+### ellswift ###
+################
 # Precomputed constant square root of -3 (mod p).
 MINUS_3_SQRT = FE(-3).sqrt()
 
@@ -414,6 +420,9 @@ def ellswift_ecdh_xonly(pubkey_theirs, privkey):
     return (d * GE.lift_x(xswiftec(u, t))).x.to_bytes()
 
 
+############
+### hkdf ###
+############
 import hashlib
 import hmac
 
@@ -436,6 +445,9 @@ def hkdf_sha256(length, ikm, salt, info):
     return okm[:length]
 
 
+################
+### chacha20 ###
+################
 CHACHA20_INDICES = (
     (0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
     (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)
@@ -516,6 +528,9 @@ class FSChaCha20:
         return ret
 
 
+################
+### poly1305 ###
+################
 class Poly1305:
     """Class representing a running poly1305 computation."""
     MODULUS = 2**130 - 5
@@ -534,6 +549,9 @@ class Poly1305:
         return ((acc + self.s) & 0xffffffffffffffffffffffffffffffff).to_bytes(16, 'little')
 
 
+#####################
+### bip324_cipher ###
+#####################
 def pad16(x):
     if len(x) % 16 == 0:
         return b''
