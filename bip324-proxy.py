@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import random
 import socket
 import sys
 import threading
@@ -56,6 +57,17 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     local_user_agent = payload[81:81+payload[80]].decode('ascii')
     print(f"    => Local user agent: {local_user_agent}")
     print(f"    => Remote address: {remote_ip_str}:{remote_port}")
+
+    # connect to target node
+    remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    remote_sock.connect((remote_ip_str, remote_port))
+    print(f"[>] Connected to {remote_ip_str}:{remote_port}")
+
+    # start key exchange phase
+    privkey, pubkey = ellswift_create()
+    garbage = random.randbytes(random.randrange(4096))
+
+    # TODO
 
 
 def main():
