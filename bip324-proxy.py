@@ -43,7 +43,17 @@ def receive_v1_message(sock):
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = receive_v1_message(client_sock)
     print(f"[<] received msgtype {msgtype}")
-    print(f"[<] received payload {payload}")
+    #print(f"[<] received payload {payload}")
+    addr_recv = payload[20:46]
+    remote_addr_ipv6 = addr_recv[8:24]
+    if remote_addr_ipv6[:12] != bytes.fromhex("00000000000000000000ffff"):
+        print("IPv6 is not supported yet.")
+        client_sock.close()
+        return
+    remote_ip_bytes = remote_addr_ipv6[-4:]
+    remote_ip_str = socket.inet_ntoa(remote_ip_bytes)
+    remote_port = int.from_bytes(addr_recv[24:26], 'big')
+    print(f"    Remote node address: {remote_ip_str}:{remote_port}")
 
 
 def main():
