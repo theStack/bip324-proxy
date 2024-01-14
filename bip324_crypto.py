@@ -235,21 +235,6 @@ class GE:
             return self
         return GE(self.x, -self.y)
 
-    def to_bytes_compressed(self):
-        """Convert a non-infinite group element to 33-byte compressed encoding."""
-        assert not self.infinity
-        return bytes([3 - self.y.is_even()]) + self.x.to_bytes()
-
-    def to_bytes_uncompressed(self):
-        """Convert a non-infinite group element to 65-byte uncompressed encoding."""
-        assert not self.infinity
-        return b'\x04' + self.x.to_bytes() + self.y.to_bytes()
-
-    def to_bytes_xonly(self):
-        """Convert (the x coordinate of) a non-infinite group element to 32-byte xonly encoding."""
-        assert not self.infinity
-        return self.x.to_bytes()
-
     @staticmethod
     def lift_x(x):
         """Return group element with specified field element as x coordinate (and even y)."""
@@ -259,40 +244,6 @@ class GE:
         if not y.is_even():
             y = -y
         return GE(x, y)
-
-    @staticmethod
-    def from_bytes(b):
-        """Convert a compressed or uncompressed encoding to a group element."""
-        assert len(b) in (33, 65)
-        if len(b) == 33:
-            if b[0] != 2 and b[0] != 3:
-                return None
-            x = FE.from_bytes(b[1:])
-            if x is None:
-                return None
-            r = GE.lift_x(x)
-            if r is None:
-                return None
-            if b[0] == 3:
-                r = -r
-            return r
-        else:
-            if b[0] != 4:
-                return None
-            x = FE.from_bytes(b[1:33])
-            y = FE.from_bytes(b[33:])
-            if y**2 != x**3 + 7:
-                return None
-            return GE(x, y)
-
-    @staticmethod
-    def from_bytes_xonly(b):
-        """Convert a point given in xonly encoding to a group element."""
-        assert len(b) == 32
-        x = FE.from_bytes(b)
-        if x is None:
-            return None
-        return GE.lift_x(x)
 
     @staticmethod
     def is_valid_x(x):
