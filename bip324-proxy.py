@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import socket
 import sys
 import threading
@@ -9,10 +10,40 @@ from bip324_crypto import ellswift_create, bip324_ecdh
 BIP324_PROXY_PORT = 1324
 
 
+def sha256(s):
+    return hashlib.sha256(s).digest()
+
+
+def receive_v1_message(sock):
+    header = sock.recv(24)
+    if not header:
+        print("Connection closed (expected header).")
+        sys.exit(3)
+    assert header[0:4] == bytes.fromhex("f9beb4d9")  # mainnet net magic
+    msgtype = header[4:16].decode('ascii').rstrip('\x00')
+    length = int.from_bytes(header[16:20], 'little')
+    payload = b''
+    bytes_left = length
+    while bytes_left > 0:
+        bytes_to_read = min(bytes_left, 4096)
+        payload_part = sock.recv(bytes_to_read)
+        if not payload_part:
+            print("Connection closed (expected payload).")
+            sys.exit(4)
+        payload += payload_part
+        bytes_left -= len(payload_part)
+    assert length == len(payload)
+    checksum = header[20:24]
+    if checksum != sha256(sha256(payload))[:4]:
+        print("Received message with invalid checksum, closing connection.")
+        sys.exit(5)
+    return msgtype, payload
+
+
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
-    print("foobar")
-    recvdata = client_sock.recv(4096)
-    print(f"received: {recvdata.hex()}")
+    msgtype, payload = receive_v1_message(client_sock)
+    print(f"[<] received msgtype {msgtype}")
+    print(f"[<] received payload {payload}")
 
 
 def main():
@@ -22,7 +53,6 @@ def main():
     shared_secret1 = bip324_ecdh(privkey, pubkey_other, pubkey, True)
     shared_secret2 = bip324_ecdh(privkey_other, pubkey, pubkey_other, False)
     assert shared_secret1 == shared_secret2
-    sys.exit(0)  # TODO: remove
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
