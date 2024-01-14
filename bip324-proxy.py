@@ -5,7 +5,13 @@ import socket
 import sys
 import threading
 
-from bip324_crypto import ellswift_create, bip324_ecdh
+from bip324_crypto import (
+    FSChaCha20,
+    FSChaCha20Poly1305,
+    bip324_ecdh,
+    ellswift_create,
+    hkdf_sha256,
+)
 
 
 BIP324_PROXY_PORT = 1324
@@ -61,13 +67,27 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     # connect to target node
     remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     remote_sock.connect((remote_ip_str, remote_port))
-    print(f"[>] Connected to {remote_ip_str}:{remote_port}")
+    print(f"[>] Connected to {remote_ip_str}:{remote_port}, initiating BIP324 handshake.")
 
-    # start key exchange phase
-    privkey, pubkey = ellswift_create()
+    # key exchange phase
+    privkey, ellswift_ours = ellswift_create()
     garbage = random.randbytes(random.randrange(4096))
-
-    # TODO
+    remote_sock.sendall(ellswift_ours + garbage)
+    ellswift_theirs = remote_sock.recv(64)
+    shared_secret = bip324_ecdh(privkey, ellswift_theirs, ellswift_ours, True)
+    salt = b'bitcoin_v2_shared_secret' + bytes.fromhex("f9beb4d9")  # mainnet net magic
+    keys = {}
+    for name in ('initiator_L', 'initiator_P', 'responder_L', 'responder_P',
+                 'garbage_terminators', 'session_id'):
+        keys[name] = hkdf_sha256(salt=salt, ikm=shared_secret, info=name.encode(), length=32)
+    send_garbage_terminator = keys['garbage_terminators'][:16]
+    recv_garbage_terminator = keys['garbage_terminators'][16:]
+    send_l = FSChaCha20(keys['initiator_L'])
+    send_p = FSChaCha20Poly1305(keys['initiator_P'])
+    recv_l = FSChaCha20(keys['responder_L'])
+    recv_p = FSChaCha20Poly1305(keys['responder_P'])
+    session_id = keys['session_id']
+    # TODO, continue
 
 
 def main():
