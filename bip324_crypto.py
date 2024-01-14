@@ -133,22 +133,6 @@ class FE:
         """Convert a field element to a 32-byte array (BE byte order)."""
         return int(self).to_bytes(32, 'big')
 
-    @staticmethod
-    def from_bytes(b):
-        """Convert a 32-byte array to a field element (BE byte order, no overflow allowed)."""
-        v = int.from_bytes(b, 'big')
-        if v >= FE.SIZE:
-            return None
-        return FE(v)
-
-    def __str__(self):
-        """Convert this field element to a 64 character hex string."""
-        return f"{int(self):064x}"
-
-    def __repr__(self):
-        """Get a string representation of this field element."""
-        return f"FE(0x{int(self):x})"
-
 
 class GE:
     """Objects of this class represent secp256k1 group elements (curve points or infinity)
@@ -230,12 +214,6 @@ class GE:
         """Multiply an integer with a group element."""
         return GE.mul((a, self))
 
-    def __neg__(self):
-        """Compute the negation of a group element."""
-        if self.infinity:
-            return self
-        return GE(self.x, -self.y)
-
     @staticmethod
     def lift_x(x):
         """Return group element with specified field element as x coordinate (and even y)."""
@@ -251,17 +229,6 @@ class GE:
         """Determine whether the provided field element is a valid X coordinate."""
         return (FE(x)**3 + 7).is_square()
 
-    def __str__(self):
-        """Convert this group element to a string."""
-        if self.infinity:
-            return "(inf)"
-        return f"({self.x},{self.y})"
-
-    def __repr__(self):
-        """Get a string representation for this group element."""
-        if self.infinity:
-            return "GE()"
-        return f"GE(0x{int(self.x):x},0x{int(self.y):x})"
 
 # The secp256k1 generator point
 G = GE.lift_x(0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798)
