@@ -42,7 +42,7 @@ def receive_v1_message(sock):
 
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = receive_v1_message(client_sock)
-    print(f"[<] received msgtype {msgtype}")
+    print(f"[<] Received {msgtype.upper()} message")
     #print(f"[<] received payload {payload}")
     addr_recv = payload[20:46]
     remote_addr_ipv6 = addr_recv[8:24]
@@ -53,7 +53,9 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     remote_ip_bytes = remote_addr_ipv6[-4:]
     remote_ip_str = socket.inet_ntoa(remote_ip_bytes)
     remote_port = int.from_bytes(addr_recv[24:26], 'big')
-    print(f"    Remote node address: {remote_ip_str}:{remote_port}")
+    local_user_agent = payload[81:81+payload[80]].decode('ascii')
+    print(f"    => Local user agent: {local_user_agent}")
+    print(f"    => Remote address: {remote_ip_str}:{remote_port}")
 
 
 def main():
@@ -74,7 +76,7 @@ def main():
 
     while True:
         client_sock, addr = sock.accept()
-        print(f"[<] Received incoming connection from {addr[0]}:{addr[1]}")
+        print(f"[<] New connection from {addr[0]}:{addr[1]}")
         proxy_thread = threading.Thread(target=bip324_proxy_handler, args=(client_sock,))
         proxy_thread.start()
 
