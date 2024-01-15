@@ -53,6 +53,16 @@ def sha256(s):
     return hashlib.sha256(s).digest()
 
 
+def recvall(sock, length):
+    msg = b''
+    bytes_left = length
+    while bytes_left > 0:
+        part = sock.recv(min(bytes_left, 16384))
+        msg += part
+        bytes_left -= len(part)
+    return msg
+
+
 def send_v1_message(sock, msgtype, payload):
     msg = bytes.fromhex("f9beb4d9")
     msg += msgtype.encode() + bytes([0]*(12 - len(msgtype)))
@@ -60,23 +70,14 @@ def send_v1_message(sock, msgtype, payload):
     sock.sendall(msg)
 
 def receive_v1_message(sock):
-    header = sock.recv(24)
+    header = recvall(sock, 24)
     if not header:
         print("Connection closed (expected header).")
         sys.exit(3)
     assert header[0:4] == bytes.fromhex("f9beb4d9")  # mainnet net magic
     msgtype = header[4:16].decode('ascii').rstrip('\x00')
     length = int.from_bytes(header[16:20], 'little')
-    payload = b''
-    bytes_left = length
-    while bytes_left > 0:
-        bytes_to_read = min(bytes_left, 4096)
-        payload_part = sock.recv(bytes_to_read)
-        if not payload_part:
-            print("Connection closed (expected payload).")
-            sys.exit(4)
-        payload += payload_part
-        bytes_left -= len(payload_part)
+    payload = recvall(sock, length)
     assert length == len(payload)
     checksum = header[20:24]
     if checksum != sha256(sha256(payload))[:4]:
@@ -91,8 +92,8 @@ def bip324_send(sock, send_l, send_p, message, aad=b''):
     sock.sendall(enc_len + enc_payload)
 
 def bip324_recv(sock, recv_l, recv_p, aad=b''):
-    length = int.from_bytes(recv_l.crypt(sock.recv(3)), 'little')
-    enc_stuff = sock.recv(1 + length + 16)
+    length = int.from_bytes(recv_l.crypt(recvall(sock, 3)), 'little')
+    enc_stuff = recvall(sock, 1 + length + 16)
     header_contents_expansion = recv_p.decrypt(aad, enc_stuff)
     assert header_contents_expansion is not None
     return header_contents_expansion[1:length+1]
@@ -139,7 +140,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     privkey, ellswift_ours = ellswift_create()
     garbage = random.randbytes(random.randrange(4096))
     remote_sock.sendall(ellswift_ours + garbage)
-    ellswift_theirs = remote_sock.recv(64)
+    ellswift_theirs = recvall(remote_sock, 64)
     shared_secret = bip324_ecdh(privkey, ellswift_theirs, ellswift_ours, True)
     salt = b'bitcoin_v2_shared_secret' + bytes.fromhex("f9beb4d9")  # mainnet net magic
     keys = {}
@@ -156,13 +157,13 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     keys = {}
     remote_sock.sendall(send_garbage_terminator)
     bip324_send(remote_sock, send_l, send_p, b'', aad=garbage)
-    recv_garbage_and_term = remote_sock.recv(16)
+    recv_garbage_and_term = recvall(remote_sock, 16)
     garbterm_found = False
     for i in range(4096):
         if recv_garbage_and_term[-16:] == recv_garbage_terminator:
             garbterm_found = True
             break
-        recv_garbage_and_term += remote_sock.recv(1)
+        recv_garbage_and_term += recvall(remote_sock, 1)
 
     if garbterm_found:
         print(f"YAY, garbage terminator found! (garb+garbterm len: {len(recv_garbage_and_term)})")
