@@ -15,6 +15,37 @@ from bip324_crypto import (
 
 
 BIP324_PROXY_PORT = 1324
+BIP324_SHORTID_TO_MSGTYPE = {
+     1: "addr",
+     2: "block",
+     3: "blocktxn",
+     4: "cmpctblock",
+     5: "feefilter",
+     6: "filteradd",
+     7: "filterclear",
+     8: "filterload",
+     9: "getblocks",
+    10: "getblocktxn",
+    11: "getdata",
+    12: "getheaders",
+    13: "headers",
+    14: "inv",
+    15: "mempool",
+    16: "merkleblock",
+    17: "notfound",
+    18: "ping",
+    19: "pong",
+    20: "sendcmpct",
+    21: "tx",
+    22: "getcfilters",
+    23: "cfilter",
+    24: "getcfheaders",
+    25: "cfheaders",
+    26: "getcfcheckpt",
+    27: "cfcheckpt",
+    28: "addrv2",
+}
+BIP324_MSGTYPE_TO_SHORTID = {msgtype: shortid for shortid, msgtype in BIP324_SHORTID_TO_MSGTYPE.items()}
 
 
 def sha256(s):
@@ -56,9 +87,24 @@ def bip324_recv(sock, recv_l, recv_p, aad=b''):
     length = int.from_bytes(recv_l.crypt(sock.recv(3)), 'little')
     enc_stuff = sock.recv(1 + length + 16)
     header_contents_expansion = recv_p.decrypt(aad, enc_stuff)
-    print(type(header_contents_expansion))
     assert header_contents_expansion is not None
     return header_contents_expansion[1:length+1]
+
+
+def send_v2_message(sock, send_l, send_p, msgtype, payload):
+    if msgtype in BIP324_MSGTYPE_TO_SHORTID:
+        complete_msg = bytes([BIP324_MSGTYPE_TO_SHORTID[msgtype]]) + payload
+    else:
+        complete_msg = bytes([0]) + msgtype.encode() + bytes([0]*(12 - len(msgtype))) + payload
+    bip324_send(sock, send_l, send_p, complete_msg)
+
+def recv_v2_message(sock, recv_l, recv_p):
+    complete_msg = bip324_recv(sock, recv_l, recv_p)
+    if complete_msg[0] in BIP324_SHORTID_TO_MSGTYPE:
+        return BIP324_SHORTID_TO_MSGTYPE[complete_msg[0]], complete_msg[1:]
+    else:
+        return complete_msg[1:13].rstrip(bytes([0])).decode(), complete_msg[13:]
+
 
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = receive_v1_message(client_sock)
@@ -119,7 +165,13 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         return
     bip324_version = bip324_recv(remote_sock, recv_l, recv_p, aad=recv_garbage_and_term[:-16])
     assert bip324_version == b''
-    print("KK, now we start :)")
+    print("[-] Handshake phase finished.")
+    send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
+    print(f"[<] Sent version message to remote peer.")
+
+    # TODO: loop here, get from remote_sock and local_sock and translate to the other side
+    answer_msgtype, answer_payload = recv_v2_message(remote_sock, recv_l, recv_p)
+    print(f"[<] Received answer to version: msgtype {answer_msgtype}, payload {answer_payload.hex()}")
 
 
 def main():
