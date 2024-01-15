@@ -54,12 +54,9 @@ def bip324_send(sock, send_l, send_p, message, aad=b''):
 
 def bip324_recv(sock, recv_l, recv_p, aad=b''):
     length = int.from_bytes(recv_l.crypt(sock.recv(3)), 'little')
-    print(f"received length: {length}")
     enc_stuff = sock.recv(1 + length + 16)
-    print(f"received enc stuff length: {len(enc_stuff)}")
     header_contents_expansion = recv_p.decrypt(aad, enc_stuff)
     print(type(header_contents_expansion))
-    # TODO, meh, why does this fail???
     assert header_contents_expansion is not None
     return header_contents_expansion[1:length+1]
 
@@ -105,7 +102,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     session_id = keys['session_id']
     keys = {}
     remote_sock.sendall(send_garbage_terminator)
-    bip324_send(remote_sock, send_l, send_p, b'', aad=send_garbage_terminator)
+    bip324_send(remote_sock, send_l, send_p, b'', aad=garbage)
     recv_garbage_and_term = remote_sock.recv(16)
     garbterm_found = False
     for i in range(4096):
@@ -120,7 +117,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         print("NAY, garbage terminator not found :(:(:(")
         print("[-] Proxy session finished")
         return
-    bip324_version = bip324_recv(remote_sock, recv_l, recv_p, aad=recv_garbage_terminator)
+    bip324_version = bip324_recv(remote_sock, recv_l, recv_p, aad=recv_garbage_and_term[:-16])
     assert bip324_version == b''
     print("KK, now we start :)")
 
