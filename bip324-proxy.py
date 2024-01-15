@@ -47,6 +47,12 @@ def receive_v1_message(sock):
     return msgtype, payload
 
 
+def bip324_encrypt(send_l, send_p, message, aad=b''):
+    enc_len = send_l.crypt(len(message).to_bytes(3, 'little'))
+    enc_payload = send_p.encrypt(aad, bytes([0]) + message)
+    return enc_len + enc_payload
+
+
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = receive_v1_message(client_sock)
     print(f"[<] Received {msgtype.upper()} message")
@@ -87,7 +93,9 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     recv_l = FSChaCha20(keys['responder_L'])
     recv_p = FSChaCha20Poly1305(keys['responder_P'])
     session_id = keys['session_id']
-    # TODO, continue
+    keys = {}
+    remote_sock.sendall(send_garbage_terminator)
+    remote_sock.sendall(bip324_encrypt(send_l, send_p, b'', aad=send_garbage_terminator))
 
 
 def main():
