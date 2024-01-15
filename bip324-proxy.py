@@ -47,11 +47,21 @@ def receive_v1_message(sock):
     return msgtype, payload
 
 
-def bip324_encrypt(send_l, send_p, message, aad=b''):
+def bip324_send(sock, send_l, send_p, message, aad=b''):
     enc_len = send_l.crypt(len(message).to_bytes(3, 'little'))
     enc_payload = send_p.encrypt(aad, bytes([0]) + message)
-    return enc_len + enc_payload
+    sock.sendall(enc_len + enc_payload)
 
+def bip324_recv(sock, recv_l, recv_p, aad=b''):
+    length = int.from_bytes(recv_l.crypt(sock.recv(3)), 'little')
+    print(f"received length: {length}")
+    enc_stuff = sock.recv(1 + length + 16)
+    print(f"received enc stuff length: {len(enc_stuff)}")
+    header_contents_expansion = recv_p.decrypt(aad, enc_stuff)
+    print(type(header_contents_expansion))
+    # TODO, meh, why does this fail???
+    assert header_contents_expansion is not None
+    return header_contents_expansion[1:length+1]
 
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = receive_v1_message(client_sock)
@@ -95,7 +105,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     session_id = keys['session_id']
     keys = {}
     remote_sock.sendall(send_garbage_terminator)
-    remote_sock.sendall(bip324_encrypt(send_l, send_p, b'', aad=send_garbage_terminator))
+    bip324_send(remote_sock, send_l, send_p, b'', aad=send_garbage_terminator)
     recv_garbage_and_term = remote_sock.recv(16)
     garbterm_found = False
     for i in range(4096):
@@ -105,9 +115,14 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         recv_garbage_and_term += remote_sock.recv(1)
 
     if garbterm_found:
-        print("YAY, garbage terminator found!")
+        print(f"YAY, garbage terminator found! (garb+garbterm len: {len(recv_garbage_and_term)})")
     else:
         print("NAY, garbage terminator not found :(:(:(")
+        print("[-] Proxy session finished")
+        return
+    bip324_version = bip324_recv(remote_sock, recv_l, recv_p, aad=recv_garbage_terminator)
+    assert bip324_version == b''
+    print("KK, now we start :)")
 
 
 def main():
