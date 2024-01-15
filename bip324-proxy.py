@@ -96,6 +96,18 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     keys = {}
     remote_sock.sendall(send_garbage_terminator)
     remote_sock.sendall(bip324_encrypt(send_l, send_p, b'', aad=send_garbage_terminator))
+    recv_garbage_and_term = remote_sock.recv(16)
+    garbterm_found = False
+    for i in range(4096):
+        if recv_garbage_and_term[-16:] == recv_garbage_terminator:
+            garbterm_found = True
+            break
+        recv_garbage_and_term += remote_sock.recv(1)
+
+    if garbterm_found:
+        print("YAY, garbage terminator found!")
+    else:
+        print("NAY, garbage terminator not found :(:(:(")
 
 
 def main():
