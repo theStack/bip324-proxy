@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import random
+from select import select
 import socket
 import sys
 import threading
@@ -169,9 +170,19 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
     print(f"[<] Sent version message to remote peer.")
 
-    # TODO: loop here, get from remote_sock and local_sock and translate to the other side
-    answer_msgtype, answer_payload = recv_v2_message(remote_sock, recv_l, recv_p)
-    print(f"[<] Received answer to version: msgtype {answer_msgtype}, payload {answer_payload.hex()}")
+    while True:
+        read_sockets, _, _ = select([client_sock, remote_sock], [], [])
+        for s in read_sockets:
+            if s == client_sock:    # [remote] v2 <--- v1 [local]
+                msgtype, payload = receive_v1_message(client_sock)
+                send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
+                direction = '<--'
+            elif s == remote_sock: # [remote] v2 ---> v1 [local]
+                msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
+                #send_v1_message(local_sock, msgtype, payload)
+                print("TODO: send to v1")
+                direction = '-->'
+            print(f"[{direction}] Received msgtype {msgtype}, payload {payload.hex()}")
 
 
 def main():
