@@ -53,6 +53,12 @@ def sha256(s):
     return hashlib.sha256(s).digest()
 
 
+def send_v1_message(sock, msgtype, payload):
+    msg = bytes.fromhex("f9beb4d9")
+    msg += msgtype.encode() + bytes([0]*(12 - len(msgtype)))
+    msg += len(payload).to_bytes(4, 'little') + sha256(sha256(payload))[:4] + payload
+    sock.sendall(msg)
+
 def receive_v1_message(sock):
     header = sock.recv(24)
     if not header:
@@ -177,10 +183,9 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
                 msgtype, payload = receive_v1_message(client_sock)
                 send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
                 direction = '<--'
-            elif s == remote_sock: # [remote] v2 ---> v1 [local]
+            elif s == remote_sock:  # [remote] v2 ---> v1 [local]
                 msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
-                #send_v1_message(local_sock, msgtype, payload)
-                print("TODO: send to v1")
+                send_v1_message(client_sock, msgtype, payload)
                 direction = '-->'
             print(f"[{direction}] Received msgtype {msgtype}, payload {payload.hex()}")
 
