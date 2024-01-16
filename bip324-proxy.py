@@ -45,7 +45,7 @@ def send_v1_message(sock, msgtype, payload):
     msg += len(payload).to_bytes(4, 'little') + sha256(sha256(payload))[:4] + payload
     sock.sendall(msg)
 
-def receive_v1_message(sock):
+def recv_v1_message(sock):
     header = recvall(sock, 24)
     if not header:
         print("Connection closed (expected header).")
@@ -91,9 +91,8 @@ def recv_v2_message(sock, recv_l, recv_p):
 
 
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
-    msgtype, payload = receive_v1_message(client_sock)
+    msgtype, payload = recv_v1_message(client_sock)
     print(f"[<] Received {msgtype.upper()} message")
-    #print(f"[<] received payload {payload}")
     addr_recv = payload[20:46]
     remote_addr_ipv6 = addr_recv[8:24]
     if remote_addr_ipv6[:12] != bytes.fromhex("00000000000000000000ffff"):
@@ -157,7 +156,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         read_sockets, _, _ = select([client_sock, remote_sock], [], [])
         for s in read_sockets:
             if s == client_sock:    # [remote] v2 <--- v1 [local]
-                msgtype, payload = receive_v1_message(client_sock)
+                msgtype, payload = recv_v1_message(client_sock)
                 send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
                 direction = '<--'
             elif s == remote_sock:  # [remote] v2 ---> v1 [local]
