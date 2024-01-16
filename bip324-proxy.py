@@ -16,37 +16,12 @@ from bip324_crypto import (
 
 
 BIP324_PROXY_PORT = 1324
-BIP324_SHORTID_TO_MSGTYPE = {
-     1: "addr",
-     2: "block",
-     3: "blocktxn",
-     4: "cmpctblock",
-     5: "feefilter",
-     6: "filteradd",
-     7: "filterclear",
-     8: "filterload",
-     9: "getblocks",
-    10: "getblocktxn",
-    11: "getdata",
-    12: "getheaders",
-    13: "headers",
-    14: "inv",
-    15: "mempool",
-    16: "merkleblock",
-    17: "notfound",
-    18: "ping",
-    19: "pong",
-    20: "sendcmpct",
-    21: "tx",
-    22: "getcfilters",
-    23: "cfilter",
-    24: "getcfheaders",
-    25: "cfheaders",
-    26: "getcfcheckpt",
-    27: "cfcheckpt",
-    28: "addrv2",
-}
-BIP324_MSGTYPE_TO_SHORTID = {msgtype: shortid for shortid, msgtype in BIP324_SHORTID_TO_MSGTYPE.items()}
+BIP324_SHORTID_MSGTYPES = [
+    "addr", "block", "blocktxn", "cmpctblock", "feefilter", "filteradd", "filterclear", "filterload",
+    "getblocks", "getblocktxn", "getdata", "getheaders", "headers", "inv", "mempool", "merkleblock",
+    "notfound", "ping", "pong", "sendcmpct", "tx", "getcfilters", "cfilter", "getcfheaders", "cfheaders",
+    "getcfcheckpt", "cfcheckpt", "addrv2",
+]
 
 
 def sha256(s):
@@ -100,16 +75,16 @@ def bip324_recv(sock, recv_l, recv_p, aad=b''):
 
 
 def send_v2_message(sock, send_l, send_p, msgtype, payload):
-    if msgtype in BIP324_MSGTYPE_TO_SHORTID:
-        complete_msg = bytes([BIP324_MSGTYPE_TO_SHORTID[msgtype]]) + payload
+    if msgtype in BIP324_SHORTID_MSGTYPES:
+        complete_msg = bytes([BIP324_SHORTID_MSGTYPES.index(msgtype)+1]) + payload
     else:
         complete_msg = bytes([0]) + msgtype.encode() + bytes([0]*(12 - len(msgtype))) + payload
     bip324_send(sock, send_l, send_p, complete_msg)
 
 def recv_v2_message(sock, recv_l, recv_p):
     complete_msg = bip324_recv(sock, recv_l, recv_p)
-    if complete_msg[0] in BIP324_SHORTID_TO_MSGTYPE:
-        return BIP324_SHORTID_TO_MSGTYPE[complete_msg[0]], complete_msg[1:]
+    if 1 <= complete_msg[0] <= len(BIP324_SHORTID_MSGTYPES):
+        return BIP324_SHORTID_MSGTYPES[complete_msg[0]-1], complete_msg[1:]
     else:
         return complete_msg[1:13].rstrip(bytes([0])).decode(), complete_msg[13:]
 
