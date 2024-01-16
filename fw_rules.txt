@@ -1,0 +1,8 @@
+nftables:
+
+# nft add rule ip nat OUTPUT 'dnat to tcp dport map { 8333 : 127.0.0.1 . 1324 }'
+
+iptables:
+
+# iptables -t nat -A OUTPUT -p tcp --dport 8333 -j DNAT --to-destination 127.0.0.1:1324
+
