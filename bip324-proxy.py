@@ -189,7 +189,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
                 send_v1_message(client_sock, msgtype, payload)
                 direction = '-->'
             payload_str = payload.hex() if len(payload) <= 16 else f"{payload[:16].hex()}..."
-            print(f"[{direction}] Received msgtype {msgtype}, payload {payload_str}")
+            print(f"[{direction}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
 
 
 def main():
