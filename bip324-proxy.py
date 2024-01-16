@@ -22,6 +22,7 @@ BIP324_SHORTID_MSGTYPES = [
     "notfound", "ping", "pong", "sendcmpct", "tx", "getcfilters", "cfilter", "getcfheaders", "cfheaders",
     "getcfcheckpt", "cfcheckpt", "addrv2",
 ]
+NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
 
 
 def sha256(s):
@@ -39,7 +40,7 @@ def recvall(sock, length):
 
 
 def send_v1_message(sock, msgtype, payload):
-    msg = bytes.fromhex("f9beb4d9")
+    msg = NET_MAGIC
     msg += msgtype.encode() + bytes([0]*(12 - len(msgtype)))
     msg += len(payload).to_bytes(4, 'little') + sha256(sha256(payload))[:4] + payload
     sock.sendall(msg)
@@ -49,7 +50,7 @@ def receive_v1_message(sock):
     if not header:
         print("Connection closed (expected header).")
         sys.exit(3)
-    assert header[0:4] == bytes.fromhex("f9beb4d9")  # mainnet net magic
+    assert header[0:4] == NET_MAGIC
     msgtype = header[4:16].decode('ascii').rstrip('\x00')
     length = int.from_bytes(header[16:20], 'little')
     payload = recvall(sock, length)
@@ -117,7 +118,7 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     remote_sock.sendall(ellswift_ours + garbage)
     ellswift_theirs = recvall(remote_sock, 64)
     shared_secret = bip324_ecdh(privkey, ellswift_theirs, ellswift_ours, True)
-    salt = b'bitcoin_v2_shared_secret' + bytes.fromhex("f9beb4d9")  # mainnet net magic
+    salt = b'bitcoin_v2_shared_secret' + NET_MAGIC
     keys = {}
     for name in ('initiator_L', 'initiator_P', 'responder_L', 'responder_P',
                  'garbage_terminators', 'session_id'):
