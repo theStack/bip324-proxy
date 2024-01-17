@@ -1,3 +1,5 @@
+- reconnect with v1 if v2 handshake fails
+  (same as Bitcoin Core does)
 - support IPv6
 - create dashboard (show net stats, session ids etc.)
 - investigate packet redirection config for other systems
