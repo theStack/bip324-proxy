@@ -34,6 +34,8 @@ def recvall(sock, length):
     bytes_left = length
     while bytes_left > 0:
         part = sock.recv(min(bytes_left, 16384))
+        if not part:
+            raise Exception("other side has closed the connection :(")
         msg += part
         bytes_left -= len(part)
     return msg
