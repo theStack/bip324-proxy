@@ -1,0 +1,9 @@
+- support IPv6
+- create dashboard (show net stats, session ids etc.)
+- investigate packet redirection config for other systems
+  than just Linux+iptables (e.g. *BSD + pf(Sense) etc.);
+  Windows and MacOS??
+- inbound connections support?
+  (investigate firewall rules)
+- rewrite in rust
+- BIP324 kernel module?
