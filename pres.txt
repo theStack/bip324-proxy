@@ -1,0 +1,5 @@
+on netcup server, start bitcoin node via
+
+$ ./src/bitcoind -v2transport -noconnect -listen -whitelist=xx.yy.0.0/16 -debug=net
+
+TODO
