@@ -178,7 +178,11 @@ def main():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(('127.0.0.1', BIP324_PROXY_PORT))
-        sock.listen(1)  # TODO: support more than one connection
+        sock.listen(5)
+        print( "---------------------")
+        print(f" BIP324 proxy server ")
+        print( "---------------------")
+        print(f"Waiting for incoming v1 connections on 127.0.0.1:{BIP324_PROXY_PORT}...")
     except Exception as e:
         print(f"ERROR: Couldn't create socket: {e}")
         sys.exit(1)
