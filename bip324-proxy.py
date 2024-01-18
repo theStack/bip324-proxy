@@ -45,9 +45,6 @@ def send_v1_message(sock, msgtype, payload):
 
 def recv_v1_message(sock):
     header = recvall(sock, 24)
-    if not header:
-        print("Connection closed (expected header).")
-        sys.exit(3)
     assert header[0:4] == NET_MAGIC
     msgtype = header[4:16].decode('ascii').rstrip('\x00')
     length = int.from_bytes(header[16:20], 'little')
