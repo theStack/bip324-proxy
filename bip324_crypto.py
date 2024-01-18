@@ -100,14 +100,7 @@ class FE:
 
         Due to the fact that our modulus is of the form (p % 4) == 3, the Tonelli-Shanks
         algorithm (https://en.wikipedia.org/wiki/Tonelli-Shanks_algorithm) is simply
-        raising the argument to the power (p + 1) / 4.
-
-        To see why: (p-1) % 2 = 0, so 2 divides the order of the multiplicative group,
-        and thus only half of the non-zero field elements are squares. An element a is
-        a (nonzero) square when Euler's criterion, a^((p-1)/2) = 1 (mod p), holds. We're
-        looking for x such that x^2 = a (mod p). Given a^((p-1)/2) = 1, that is equivalent
-        to x^2 = a^(1 + (p-1)/2) mod p. As (1 + (p-1)/2) is even, this is equivalent to
-        x = a^((1 + (p-1)/2)/2) mod p, or x = a^((p+1)/4) mod p."""
+        raising the argument to the power (p + 1) / 4."""
         v = int(self)
         s = pow(v, (FE.SIZE + 1) // 4, FE.SIZE)
         if s**2 % FE.SIZE == v:
@@ -148,9 +141,6 @@ class GE:
 
     # Order of the group (number of points on the curve, plus 1 for infinity)
     ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-
-    # Number of valid distinct x coordinates on the curve.
-    ORDER_HALF = ORDER // 2
 
     def __init__(self, x=None, y=None):
         """Initialize a group element with specified x and y coordinates, or infinity."""

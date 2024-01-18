@@ -5,14 +5,7 @@ import socket
 import sys
 import threading
 
-from bip324_crypto import (
-    FSChaCha20,
-    FSChaCha20Poly1305,
-    bip324_ecdh,
-    ellswift_create,
-    hkdf_sha256,
-    sha256,
-)
+from bip324_crypto import *
 
 
 BIP324_PROXY_PORT = 1324
@@ -119,12 +112,9 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         keys[name] = hkdf_sha256(salt=salt, ikm=shared_secret, info=name.encode(), length=32)
     send_garbage_terminator = keys['garbage_terminators'][:16]
     recv_garbage_terminator = keys['garbage_terminators'][16:]
-    send_l = FSChaCha20(keys['initiator_L'])
-    send_p = FSChaCha20Poly1305(keys['initiator_P'])
-    recv_l = FSChaCha20(keys['responder_L'])
-    recv_p = FSChaCha20Poly1305(keys['responder_P'])
+    send_l, send_p = FSChaCha20(keys['initiator_L']), FSChaCha20Poly1305(keys['initiator_P'])
+    recv_l, recv_p = FSChaCha20(keys['responder_L']), FSChaCha20Poly1305(keys['responder_P'])
     session_id = keys['session_id']
-    keys = {}
     remote_sock.sendall(send_garbage_terminator)
     bip324_send(remote_sock, send_l, send_p, b'', aad=garbage)
     recv_garbage_and_term = recvall(remote_sock, 16)
@@ -163,25 +153,18 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
 
 
 def main():
-    # bip324 ecdh sanity check
-    privkey, pubkey = ellswift_create()
-    privkey_other, pubkey_other = ellswift_create()
-    shared_secret1 = bip324_ecdh(privkey, pubkey_other, pubkey, True)
-    shared_secret2 = bip324_ecdh(privkey_other, pubkey, pubkey_other, False)
-    assert shared_secret1 == shared_secret2
-
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(('127.0.0.1', BIP324_PROXY_PORT))
         sock.listen(5)
-        print( "---------------------")
-        print(f" BIP324 proxy server ")
-        print( "---------------------")
-        print(f"Waiting for incoming v1 connections on 127.0.0.1:{BIP324_PROXY_PORT}...")
     except Exception as e:
         print(f"ERROR: Couldn't create socket: {e}")
         sys.exit(1)
 
+    print( "---------------------")
+    print(f" BIP324 proxy server ")
+    print( "---------------------")
+    print(f"Waiting for incoming v1 connections on 127.0.0.1:{BIP324_PROXY_PORT}...")
     while True:
         client_sock, addr = sock.accept()
         print(f"[<] New connection from {addr[0]}:{addr[1]}")
