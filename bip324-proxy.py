@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import hashlib
 import random
 from select import select
 import socket
@@ -12,6 +11,7 @@ from bip324_crypto import (
     bip324_ecdh,
     ellswift_create,
     hkdf_sha256,
+    sha256,
 )
 
 
@@ -23,10 +23,6 @@ BIP324_SHORTID_MSGTYPES = [
     "getcfcheckpt", "cfcheckpt", "addrv2",
 ]
 NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
-
-
-def sha256(s):
-    return hashlib.sha256(s).digest()
 
 
 def recvall(sock, length):

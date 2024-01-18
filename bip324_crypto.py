@@ -439,11 +439,13 @@ class Poly1305:
 ###################
 ### bip324_ecdh ###
 ###################
+def sha256(s):
+    return hashlib.sha256(s).digest()
+
+
 def TaggedHash(tag, data):
-    ss = hashlib.sha256(tag.encode('utf-8')).digest()
-    ss += ss
-    ss += data
-    return hashlib.sha256(ss).digest()
+    tag_hash = sha256(tag.encode())
+    return sha256(tag_hash + tag_hash + data)
 
 
 def bip324_ecdh(priv, ellswift_theirs, ellswift_ours, initiating):
