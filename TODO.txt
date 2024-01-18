@@ -1,3 +1,5 @@
+- collect and show tx/rx bytes on each side to
+  prove "mild bandwidth reduction" empirically
 - reconnect with v1 if v2 handshake fails
   (same as Bitcoin Core does)
 - support IPv6
