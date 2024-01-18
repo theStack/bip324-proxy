@@ -140,11 +140,11 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     while True:
         read_sockets, _, _ = select([client_sock, remote_sock], [], [])
         for s in read_sockets:
-            if s == client_sock:    # [remote] v2 <--- v1 [local]
+            if s == client_sock:    # [local] v1 ---> v2 [remote]
                 msgtype, payload = recv_v1_message(client_sock)
                 send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
                 direction = '<--'
-            elif s == remote_sock:  # [remote] v2 ---> v1 [local]
+            elif s == remote_sock:  # [local] v1 <--- v2 [remote]
                 msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
                 send_v1_message(client_sock, msgtype, payload)
                 direction = '-->'
