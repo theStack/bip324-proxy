@@ -78,6 +78,11 @@ def recv_v2_message(sock, recv_l, recv_p):
         return complete_msg[1:13].rstrip(bytes([0])).decode(), complete_msg[13:]
 
 
+def log_recv(direction_tag, msgtype, payload):
+    payload_str = payload.hex() if len(payload) <= 16 else f"{payload[:16].hex()}..."
+    print(f"[{direction_tag}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
+
+
 def bip324_proxy_handler(client_sock: socket.socket) -> None:
     msgtype, payload = recv_v1_message(client_sock)
     print(f"[<] Received {msgtype.upper()} message")
@@ -141,18 +146,15 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     print(f"[<] Sent version message to remote peer.")
 
     while True:
-        read_sockets, _, _ = select([client_sock, remote_sock], [], [])
-        for s in read_sockets:
-            if s == client_sock:    # [local] v1 ---> v2 [remote]
-                msgtype, payload = recv_v1_message(client_sock)
-                send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
-                direction = '<--'
-            elif s == remote_sock:  # [local] v1 <--- v2 [remote]
-                msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
-                send_v1_message(client_sock, msgtype, payload)
-                direction = '-->'
-            payload_str = payload.hex() if len(payload) <= 16 else f"{payload[:16].hex()}..."
-            print(f"[{direction}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
+        r, _, _ = select([client_sock, remote_sock], [], [])
+        if client_sock in r:  # [local] v1 ---> v2 [remote]
+            msgtype, payload = recv_v1_message(client_sock)
+            send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
+            log_recv('<--', msgtype, payload)
+        if remote_sock in r:  # [local] v1 <--- v2 [remote]
+            msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
+            send_v1_message(client_sock, msgtype, payload)
+            log_recv('-->', msgtype, payload)
 
 
 def main():
