@@ -16,6 +16,7 @@ BIP324_SHORTID_MSGTYPES = [
     "getcfcheckpt", "cfcheckpt", "addrv2",
 ]
 NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
+V1_PREFIX = NET_MAGIC + b"version\x00\x00\x00\x00\x00"
 
 
 def recvall(sock, length):
@@ -84,6 +85,20 @@ def log_recv(direction_tag, msgtype, payload):
 
 
 def bip324_proxy_handler(local_socket):
+    # peek into receive buffer byte for byte to detect early if the first
+    # incoming message is not a bitcoin p2p v1 message; in that case we can't
+    # do anything (we wouldn't know the remote destination to send data to) and
+    # have to close the local conncection
+    peeked_prefix = b''
+    while len(peeked_prefix) < len(V1_PREFIX):
+        peeked_prefix = local_socket.recv(len(peeked_prefix)+1, socket.MSG_PEEK)
+        expected_prefix = V1_PREFIX[:len(peeked_prefix)]
+        if peeked_prefix != expected_prefix:
+            print(f"V1 prefix mismatch after {len(peeked_prefix)} bytes " \
+                  f"(expected {expected_prefix.hex()} got {peeked_prefix.hex()}), close connection.")
+            local_socket.close()
+            return
+
     msgtype, payload = recv_v1_message(local_socket)
     print(f"[<] Received {msgtype.upper()} message")
     addr_recv = payload[20:46]
