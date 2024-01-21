@@ -83,14 +83,14 @@ def log_recv(direction_tag, msgtype, payload):
     print(f"[{direction_tag}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
 
 
-def bip324_proxy_handler(client_sock: socket.socket) -> None:
-    msgtype, payload = recv_v1_message(client_sock)
+def bip324_proxy_handler(local_socket):
+    msgtype, payload = recv_v1_message(local_socket)
     print(f"[<] Received {msgtype.upper()} message")
     addr_recv = payload[20:46]
     remote_addr_ipv6 = addr_recv[8:24]
     if remote_addr_ipv6[:12] != bytes.fromhex("00000000000000000000ffff"):
         print("IPv6 is not supported yet.")
-        client_sock.close()
+        local_socket.close()
         return
     remote_ip_bytes = remote_addr_ipv6[-4:]
     remote_ip_str = socket.inet_ntoa(remote_ip_bytes)
@@ -100,15 +100,15 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     print(f"    => Remote address: {remote_ip_str}:{remote_port}")
 
     # connect to target node
-    remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    remote_sock.connect((remote_ip_str, remote_port))
+    remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    remote_socket.connect((remote_ip_str, remote_port))
     print(f"[>] Connected to {remote_ip_str}:{remote_port}, initiating BIP324 handshake.")
 
     # key exchange phase
     privkey, ellswift_ours = ellswift_create()
     garbage = random.randbytes(random.randrange(4096))
-    remote_sock.sendall(ellswift_ours + garbage)
-    ellswift_theirs = recvall(remote_sock, 64)
+    remote_socket.sendall(ellswift_ours + garbage)
+    ellswift_theirs = recvall(remote_socket, 64)
     shared_secret = bip324_ecdh(privkey, ellswift_theirs, ellswift_ours, True)
     salt = b'bitcoin_v2_shared_secret' + NET_MAGIC
     keys = {}
@@ -120,15 +120,15 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
     send_l, send_p = FSChaCha20(keys['initiator_L']), FSChaCha20Poly1305(keys['initiator_P'])
     recv_l, recv_p = FSChaCha20(keys['responder_L']), FSChaCha20Poly1305(keys['responder_P'])
     session_id = keys['session_id']
-    remote_sock.sendall(send_garbage_terminator)
-    bip324_send(remote_sock, send_l, send_p, b'', aad=garbage)
-    recv_garbage_and_term = recvall(remote_sock, 16)
+    remote_socket.sendall(send_garbage_terminator)
+    bip324_send(remote_socket, send_l, send_p, b'', aad=garbage)
+    recv_garbage_and_term = recvall(remote_socket, 16)
     garbterm_found = False
     for i in range(4096):
         if recv_garbage_and_term[-16:] == recv_garbage_terminator:
             garbterm_found = True
             break
-        recv_garbage_and_term += recvall(remote_sock, 1)
+        recv_garbage_and_term += recvall(remote_socket, 1)
 
     if garbterm_found:
         print(f"YAY, garbage terminator found! (garb+garbterm len: {len(recv_garbage_and_term)})")
@@ -136,24 +136,24 @@ def bip324_proxy_handler(client_sock: socket.socket) -> None:
         print("NAY, garbage terminator not found :(:(:(")
         print("[-] Proxy session finished")
         return
-    bip324_version = bip324_recv(remote_sock, recv_l, recv_p, aad=recv_garbage_and_term[:-16])
+    bip324_version = bip324_recv(remote_socket, recv_l, recv_p, aad=recv_garbage_and_term[:-16])
     assert bip324_version == b''
     print("[-] Handshake phase finished.")
     with open('./v2_connections.log', 'a') as f:
         f.write(f'v2 connection established from local client "{local_user_agent}" to {remote_ip_str}:{remote_port}.\n')
         f.write(f'    bip324 session id: {session_id.hex()}\n\n')
-    send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
+    send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
     print(f"[<] Sent version message to remote peer.")
 
     while True:
-        r, _, _ = select([client_sock, remote_sock], [], [])
-        if client_sock in r:  # [local] v1 ---> v2 [remote]
-            msgtype, payload = recv_v1_message(client_sock)
-            send_v2_message(remote_sock, send_l, send_p, msgtype, payload)
+        r, _, _ = select([local_socket, remote_socket], [], [])
+        if local_socket in r:   # [local] v1 ---> v2 [remote]
+            msgtype, payload = recv_v1_message(local_socket)
+            send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
             log_recv('<--', msgtype, payload)
-        if remote_sock in r:  # [local] v1 <--- v2 [remote]
-            msgtype, payload = recv_v2_message(remote_sock, recv_l, recv_p)
-            send_v1_message(client_sock, msgtype, payload)
+        if remote_socket in r:  # [local] v1 <--- v2 [remote]
+            msgtype, payload = recv_v2_message(remote_socket, recv_l, recv_p)
+            send_v1_message(local_socket, msgtype, payload)
             log_recv('-->', msgtype, payload)
 
 
@@ -171,9 +171,9 @@ def main():
     print( "---------------------")
     print(f"Waiting for incoming v1 connections on 127.0.0.1:{BIP324_PROXY_PORT}...")
     while True:
-        client_sock, addr = sock.accept()
+        local_socket, addr = sock.accept()
         print(f"[<] New connection from {addr[0]}:{addr[1]}")
-        proxy_thread = threading.Thread(target=bip324_proxy_handler, args=(client_sock,))
+        proxy_thread = threading.Thread(target=bip324_proxy_handler, args=(local_socket,))
         proxy_thread.start()
 
 
