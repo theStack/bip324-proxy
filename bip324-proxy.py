@@ -17,7 +17,11 @@ BIP324_SHORTID_MSGTYPES = [
 ]
 NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
 V1_PREFIX = NET_MAGIC + b"version\x00\x00\x00\x00\x00"
+V1_FALLBACK_ALLOWED = False  # only allow v2 connections
 
+
+class ConnClosedException(Exception):
+    pass
 
 def recvall(sock, length):
     msg = b''
@@ -25,7 +29,7 @@ def recvall(sock, length):
     while bytes_left > 0:
         part = sock.recv(min(bytes_left, 16384))
         if not part:
-            raise Exception("other side has closed the connection :(")
+            raise ConnClosedException()
         msg += part
         bytes_left -= len(part)
     return msg
@@ -123,7 +127,35 @@ def bip324_proxy_handler(local_socket):
     privkey, ellswift_ours = ellswift_create()
     garbage = random.randbytes(random.randrange(4096))
     remote_socket.sendall(ellswift_ours + garbage)
-    ellswift_theirs = recvall(remote_socket, 64)
+    v1_fallback = False
+    try:
+        ellswift_theirs = recvall(remote_socket, 64)
+    except (ConnClosedException, ConnectionResetError):
+        print(f"[!] Peer {remote_ip_str}:{remote_port} closed connection. ", end='')
+        if V1_FALLBACK_ALLOWED:
+            print("Reconnect and pass through everything in v1...", end='')
+            v1_fallback = True
+        else:
+            print("Closing (we only allow v2 connections!).")
+            local_socket.close()
+            return
+        print()
+    if v1_fallback:
+        remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        remote_socket.connect((remote_ip_str, remote_port))
+        print(f"[>] Re-connected to {remote_ip_str}:{remote_port}, passing through v1 VERSION message.")
+        send_v1_message(remote_socket, msgtype, payload)
+        while True:
+            r, _, _ = select([local_socket, remote_socket], [], [])
+            if local_socket in r:
+                msgtype, payload = recv_v1_message(local_socket)
+                send_v1_message(remote_socket, msgtype, payload)
+                log_recv('<-- (v1)', msgtype, payload)
+            if remote_socket in r:
+                msgtype, payload = recv_v1_message(remote_socket)
+                send_v1_message(local_socket, msgtype, payload)
+                log_recv('--> (v1)', msgtype, payload)
+        return
     shared_secret = bip324_ecdh(privkey, ellswift_theirs, ellswift_ours, True)
     salt = b'bitcoin_v2_shared_secret' + NET_MAGIC
     keys = {}
