@@ -13,6 +13,7 @@ Drawbacks
 
 - higher cpu usage / latency
   (have to do both v1+v2, go through userspace->kernelspace->userspace->kernelspace...)
+- more resources used (3 sockets / outbound, 2 streams / outbound)
 - client has no awareness of the proxy; if a connection is closed,
   was that initiated by the remote node or by the proxy (e.g. due to a bug or crash)?
 - can only pass through v1 messages and nothing else
