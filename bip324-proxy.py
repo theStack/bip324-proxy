@@ -197,11 +197,11 @@ def bip324_proxy_handler(local_socket):
         if local_socket in r:   # [local] v1 ---> v2 [remote]
             msgtype, payload = recv_v1_message(local_socket)
             send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
-            log_recv('<--', msgtype, payload)
+            log_recv('-->', msgtype, payload)
         if remote_socket in r:  # [local] v1 <--- v2 [remote]
             msgtype, payload = recv_v2_message(remote_socket, recv_l, recv_p)
             send_v1_message(local_socket, msgtype, payload)
-            log_recv('-->', msgtype, payload)
+            log_recv('<--', msgtype, payload)
 
 
 def main():
