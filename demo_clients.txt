@@ -8,6 +8,8 @@ with a focus on low resource utilization, modularity and security."
 Repo: https://github.com/cloudhead/nakamoto
 Language: Rust
 
+$ cargo run -p nakamoto-node -- --connect x.y.z.a
+
 -----
 showcase 2) neutrino
 Summary: "Privacy-Preserving Bitcoin Light Client"
