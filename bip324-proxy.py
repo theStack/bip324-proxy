@@ -88,6 +88,19 @@ def log_recv(direction_tag, msgtype, payload):
     print(f"[{direction_tag}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
 
 
+def main_loop(local_socket, remote_socket, send_l, send_p, recv_l, recv_p):
+    while True:
+        r, _, _ = select([local_socket, remote_socket], [], [])
+        if local_socket in r:   # [local] v1 ---> v2 [remote]
+            msgtype, payload = recv_v1_message(local_socket)
+            send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
+            log_recv('-->', msgtype, payload)
+        if remote_socket in r:  # [local] v1 <--- v2 [remote]
+            msgtype, payload = recv_v2_message(remote_socket, recv_l, recv_p)
+            send_v1_message(local_socket, msgtype, payload)
+            log_recv('<--', msgtype, payload)
+
+
 def bip324_proxy_handler(local_socket):
     # peek into receive buffer byte for byte to detect early if the first
     # incoming message is not a bitcoin p2p v1 message; in that case we can't
@@ -191,17 +204,10 @@ def bip324_proxy_handler(local_socket):
         f.write(f'    bip324 session id: {session_id.hex()}\n\n')
     send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
     print(f"[<] Sent version message to remote peer.")
-
-    while True:
-        r, _, _ = select([local_socket, remote_socket], [], [])
-        if local_socket in r:   # [local] v1 ---> v2 [remote]
-            msgtype, payload = recv_v1_message(local_socket)
-            send_v2_message(remote_socket, send_l, send_p, msgtype, payload)
-            log_recv('-->', msgtype, payload)
-        if remote_socket in r:  # [local] v1 <--- v2 [remote]
-            msgtype, payload = recv_v2_message(remote_socket, recv_l, recv_p)
-            send_v1_message(local_socket, msgtype, payload)
-            log_recv('<--', msgtype, payload)
+    try:
+        main_loop(local_socket, remote_socket, send_l, send_p, recv_l, recv_p)
+    except (ConnClosedException, ConnectionResetError, BrokenPipeError):
+        print("*** Connection closed. ***")
 
 
 def main():
