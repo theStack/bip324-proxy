@@ -198,7 +198,8 @@ def bip324_proxy_handler(local_socket):
         return
     bip324_version = bip324_recv(remote_socket, recv_l, recv_p, aad=recv_garbage_and_term[:-16])
     assert bip324_version == b''
-    print("[-] Handshake phase finished.")
+    print( "[=] Handshake phase finished, v2 connection established.")
+    print(f"[=] Session ID: {session_id.hex()}")
     with open('./v2_connections.log', 'a') as f:
         f.write(f'v2 connection established from local client "{local_user_agent}" to {remote_ip_str}:{remote_port}.\n')
         f.write(f'    bip324 session id: {session_id.hex()}\n\n')
