@@ -84,8 +84,8 @@ def recv_v2_message(sock, recv_l, recv_p):
 
 
 def log_recv(direction_tag, msgtype, payload):
-    payload_str = payload.hex() if len(payload) <= 16 else f"{payload[:16].hex()}..."
-    print(f"[{direction_tag}] Received msgtype {msgtype}, payload {payload_str} ({len(payload)} bytes)")
+    payload_str = payload.hex() if len(payload) <= 10 else f"{payload[:10].hex()}..."
+    print(f"[{direction_tag}] Received {msgtype.upper()}, payload {payload_str} ({len(payload)} bytes)")
 
 
 def main_loop(local_socket, remote_socket, send_l, send_p, recv_l, recv_p):
