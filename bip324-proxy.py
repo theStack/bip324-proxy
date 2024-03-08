@@ -15,7 +15,8 @@ BIP324_SHORTID_MSGTYPES = [
     "notfound", "ping", "pong", "sendcmpct", "tx", "getcfilters", "cfilter", "getcfheaders", "cfheaders",
     "getcfcheckpt", "cfcheckpt", "addrv2",
 ]
-NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
+#NET_MAGIC = bytes.fromhex("f9beb4d9")  # mainnet
+NET_MAGIC = bytes.fromhex("0a03cf40")  # signet
 V1_PREFIX = NET_MAGIC + b"version\x00\x00\x00\x00\x00"
 V1_FALLBACK_ALLOWED = False  # only allow v2 connections
 
