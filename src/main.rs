@@ -2,13 +2,15 @@ use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 
 const BIP324_PROXY_PORT: u16 = 1324;
+const NET_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9]; // mainnet
 
 fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
     let mut buf: Vec<u8> = vec![];
 
     sock.take(24).read_to_end(&mut buf).unwrap();
     println!("received v1 header bytes: {:02x?}", buf);
-    println!("TODO: verify network magic");
+    // TODO: proper error handling, don't panic
+    assert_eq!(NET_MAGIC, buf[0..4], "network magic mismatch");
     println!("TODO: extract msgtype + payload");
     println!("TODO: verify checksum");
     ("dummymsgtype".to_string(), buf) // TODO
