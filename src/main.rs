@@ -5,14 +5,14 @@ const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9]; // mainnet
 
 fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
-    let mut buf: Vec<u8> = vec![];
-    let mut payload: Vec<u8> = vec![];
+    let mut header = vec![];
+    let mut payload = vec![];
 
-    sock.take(24).read_to_end(&mut buf).unwrap();
+    sock.take(24).read_to_end(&mut header).unwrap();
     // TODO: proper error handling, don't panic
-    assert_eq!(NET_MAGIC, buf[0..4], "network magic mismatch");
-    let msgtype = String::from_utf8(buf[4..16].to_vec()).unwrap();
-    let payload_len = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+    assert_eq!(NET_MAGIC, header[0..4], "network magic mismatch");
+    let msgtype = String::from_utf8(header[4..16].to_vec()).unwrap();
+    let payload_len = u32::from_le_bytes(header[16..20].try_into().unwrap());
     sock.take(payload_len as u64).read_to_end(&mut payload).unwrap();
     println!("TODO: verify v1 payload checksum");
     (msgtype, payload) // TODO
