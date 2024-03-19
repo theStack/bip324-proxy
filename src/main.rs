@@ -20,7 +20,20 @@ fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
 
 fn bip324_proxy_handler(local_socket: TcpStream) {
     let (msgtype, payload) = recv_v1_message(&local_socket);
-    println!("received msgtype = {}, payload = {:02x?}", msgtype, payload);
+    println!("[<] Received {} message", msgtype.to_uppercase());
+    let addr_recv = &payload[20..46];
+    let remote_ipv6 = &addr_recv[8..24];
+    if remote_ipv6[..12] != [0,0,0,0,0,0,0,0,0,0,0xff,0xff] {
+        println!("IPv6 is not supported yet.");
+        // TODO: socket closing happens automatically?
+        return
+    }
+    let remote_ipv4 = &remote_ipv6[12..];
+    let remote_ipv4_str = format!("{}.{}.{}.{}", remote_ipv4[0], remote_ipv4[1], remote_ipv4[2], remote_ipv4[3]);
+    let remote_port = u16::from_be_bytes(addr_recv[24..26].try_into().unwrap());
+    // TODO: extract and show local user agent
+    println!("    => Remote address: {}:{}", remote_ipv4_str, remote_port);
+
     println!("TODO: implement rest of bip324_proxy_handler")
 }
 
