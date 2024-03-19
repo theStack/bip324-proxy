@@ -1,8 +1,21 @@
+use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 
 const BIP324_PROXY_PORT: u16 = 1324;
 
+fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
+    let mut buf: Vec<u8> = vec![];
+
+    sock.take(24).read_to_end(&mut buf).unwrap();
+    println!("received v1 header bytes: {:02x?}", buf);
+    println!("TODO: verify network magic");
+    println!("TODO: extract msgtype + payload");
+    println!("TODO: verify checksum");
+    ("dummymsgtype".to_string(), buf) // TODO
+}
+
 fn bip324_proxy_handler(local_socket: TcpStream) {
+    let (_msgtype, _payload) = recv_v1_message(&local_socket);
     println!("TODO: implement bip324_proxy_handler")
 }
 
