@@ -1,13 +1,22 @@
 use bitcoin_hashes::{Hash, sha256d};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::exit;
 
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9]; // mainnet
 
-fn send_v1_message(sock: &TcpStream) {
-    // TODO
+fn send_v1_message(mut sock: &TcpStream, message: (String, Vec<u8>)) {
+    let (msgtype, payload) = message;
+    let mut buf = vec![];
+
+    buf.extend_from_slice(&NET_MAGIC);
+    buf.extend_from_slice(&msgtype.as_bytes());
+    buf.extend_from_slice(&vec![0; 12 - msgtype.len()]);
+    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&sha256d::Hash::hash(&payload).as_byte_array()[..4]);
+    buf.extend_from_slice(&payload);
+    sock.write_all(&buf).unwrap();
 }
 
 fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
@@ -47,11 +56,21 @@ fn bip324_proxy_handler(local_socket: TcpStream) {
     println!("    => Remote address: {}", &remote_address);
 
     // connect to target node
-    if let Ok(remote_socket) = TcpStream::connect(&remote_address) {
-        println!("[>] Connected to {}, initiating BIP324 handshake.", &remote_address);
-    } else {
-        println!("[!] Couldn't connect to {}, closing local connection.", &remote_address);
-    }
+    let remote_socket = TcpStream::connect(&remote_address);
+    let mut remote_socket = match remote_socket {
+        Ok(rs) => rs,
+        Err(e) => {
+            println!("[!] Couldn't connect to {}, closing local connection.", &remote_address);
+            return;
+        }
+    };
+
+    // TODO: implement v2 protocol; this is a dummy v1<->v1 proxy for now for testing purposes
+    println!("[>] Connected to {}, initiating BIP324 handshake.", &remote_address);
+    send_v1_message(&remote_socket, (msgtype, payload));
+    println!("[>] Sent version message to remote peer.");
+    let (answer_msgtype, answer_payload) = recv_v1_message(&remote_socket);
+    println!("received {} message answer from remote peer: {:02x?}", answer_msgtype.to_uppercase(), answer_payload);
 
     println!("TODO: implement rest of bip324_proxy_handler")
 }
