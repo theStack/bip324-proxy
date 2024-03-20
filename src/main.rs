@@ -6,6 +6,10 @@ use std::process::exit;
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9]; // mainnet
 
+fn send_v1_message(sock: &TcpStream) {
+    // TODO
+}
+
 fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
     let mut header = vec![];
     let mut payload = vec![];
@@ -21,7 +25,7 @@ fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
         println!("Received message with invalid checksum, closing connection.");
         exit(1);
     }
-    (msgtype, payload) // TODO
+    (msgtype, payload)
 }
 
 fn bip324_proxy_handler(local_socket: TcpStream) {
@@ -37,9 +41,17 @@ fn bip324_proxy_handler(local_socket: TcpStream) {
     let remote_ipv4 = &remote_ipv6[12..];
     let remote_ipv4_str = format!("{}.{}.{}.{}", remote_ipv4[0], remote_ipv4[1], remote_ipv4[2], remote_ipv4[3]);
     let remote_port = u16::from_be_bytes(addr_recv[24..26].try_into().unwrap());
+    let remote_address = format!("{}:{}", remote_ipv4_str, remote_port);
     let local_user_agent = String::from_utf8(payload[81..81+payload[80] as usize].to_vec()).unwrap();
     println!("    => Local user agent: {}", local_user_agent);
-    println!("    => Remote address: {}:{}", remote_ipv4_str, remote_port);
+    println!("    => Remote address: {}", &remote_address);
+
+    // connect to target node
+    if let Ok(remote_socket) = TcpStream::connect(&remote_address) {
+        println!("[>] Connected to {}, initiating BIP324 handshake.", &remote_address);
+    } else {
+        println!("[!] Couldn't connect to {}, closing local connection.", &remote_address);
+    }
 
     println!("TODO: implement rest of bip324_proxy_handler")
 }
