@@ -1,5 +1,7 @@
+use bitcoin_hashes::{Hash, sha256d};
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
+use std::process::exit;
 
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9]; // mainnet
@@ -14,7 +16,11 @@ fn recv_v1_message(sock: &TcpStream) -> (String, Vec<u8>) {
     let msgtype = String::from_utf8(header[4..16].to_vec()).unwrap();
     let payload_len = u32::from_le_bytes(header[16..20].try_into().unwrap());
     sock.take(payload_len as u64).read_to_end(&mut payload).unwrap();
-    println!("TODO: verify v1 payload checksum");
+    let checksum = &header[20..24];
+    if checksum != &sha256d::Hash::hash(&payload).as_byte_array()[..4] {
+        println!("Received message with invalid checksum, closing connection.");
+        exit(1);
+    }
     (msgtype, payload) // TODO
 }
 
