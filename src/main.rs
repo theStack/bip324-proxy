@@ -31,7 +31,8 @@ fn bip324_proxy_handler(local_socket: TcpStream) {
     let remote_ipv4 = &remote_ipv6[12..];
     let remote_ipv4_str = format!("{}.{}.{}.{}", remote_ipv4[0], remote_ipv4[1], remote_ipv4[2], remote_ipv4[3]);
     let remote_port = u16::from_be_bytes(addr_recv[24..26].try_into().unwrap());
-    // TODO: extract and show local user agent
+    let local_user_agent = String::from_utf8(payload[81..81+payload[80] as usize].to_vec()).unwrap();
+    println!("    => Local user agent: {}", local_user_agent);
     println!("    => Remote address: {}:{}", remote_ipv4_str, remote_port);
 
     println!("TODO: implement rest of bip324_proxy_handler")
