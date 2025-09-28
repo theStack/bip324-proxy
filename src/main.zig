@@ -2,6 +2,9 @@ const std = @import("std");
 const net = std.net;
 
 const BIP324_PROXY_PORT: u16 = 1324;
+const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
+//const NET_MAGIC: [4]u8 = .{0x0a,0x03,0xcf,0x40}; // signet
+const V1_PREFIX: [16]u8 = NET_MAGIC ++ .{'v','e','r','s','i','o','n',0,0,0,0,0};
 
 var stdout_buf: [1024]u8 = undefined;
 var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
