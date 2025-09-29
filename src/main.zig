@@ -1,6 +1,10 @@
 const std = @import("std");
 const net = std.net;
+const random = std.crypto.random;
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const s = @cImport({
+    @cInclude("secp256k1_ellswift.h");
+});
 
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
@@ -55,6 +59,7 @@ fn recvV1MessageFull(conn: *const net.Server.Connection) !struct {[]u8, []u8} {
     var net_magic: [4]u8 = undefined;
     var n_read = try conn.stream.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == net_magic.len); // XXX
     if (!std.mem.eql(u8, net_magic, NET_MAGIC)) {
         try print("Received V1 message with wrong NET_MAGIC\n", .{});
         return error.ConnectionClosed;
@@ -123,7 +128,31 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     defer proxy_client.close();
     try print("[>] Connected to {f}, initiating BIP324 handshake.\n", .{ remote_addr });
 
-    // TODO: do BIP324 handshake
+    // BIP324 key exchange phase
+    // - create ellswift keypair
+    var seckey: [32]u8 = undefined;
+    var pubkey_ours: [64]u8 = undefined;
+    random.bytes(&seckey);
+    const ctx = s.secp256k1_context_create(s.SECP256K1_CONTEXT_NONE);
+    defer s.secp256k1_context_destroy(ctx);
+    const ret = s.secp256k1_ellswift_create(ctx, &pubkey_ours, &seckey, null);
+    std.debug.assert(ret == 1);
+    // - generate random-length garbage
+    var garbage_buf: [4096]u8 = undefined;
+    random.bytes(&garbage_buf);
+    const garbage_len = random.intRangeAtMost(u16, 0, 4096);
+    const garbage = garbage_buf[0..garbage_len];
+    // - send our pubkey + garbage
+    try proxy_client.writeAll(&pubkey_ours);
+    try proxy_client.writeAll(garbage);
+    // - receive their pubkey
+    var pubkey_theirs: [64]u8 = undefined;
+    const n_read = try proxy_client.read(pubkey_theirs[0..]);
+    if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == 64);
+    try print("pubkey received!!!!!\n", .{});
+
+    // TODO: perform ECDH
 }
 
 pub fn main() !void {
