@@ -5,6 +5,7 @@ const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
 //const NET_MAGIC: [4]u8 = .{0x0a,0x03,0xcf,0x40}; // signet
 const V1_PREFIX: [16]u8 = NET_MAGIC ++ .{'v','e','r','s','i','o','n',0,0,0,0,0};
+const MAX_PROTOCOL_MESSAGE_LENGTH: u32 = 4 * 1000 * 1000;
 
 var stdout_buf: [1024]u8 = undefined;
 var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
@@ -21,10 +22,17 @@ fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
     if (n_read == 0) return error.ConnectionClosed;
 
     const length: u32 = std.mem.readInt(u32, header[0..4], .little);
-    try print("{d}\n", .{length});
+    if (length > MAX_PROTOCOL_MESSAGE_LENGTH) {
+        try print("Received V1 message too large payload size (4 MB)\n", .{});
+        return error.ConnectionClosed;
+    }
+    try print("received package with length {d}\n", .{length});
 
-    // TODO: fill this etc
-    const buffer = std.heap.page_allocator.alloc(u8, 1024);
+    var buffer = try std.heap.page_allocator.alloc(u8, length);
+    // TODO: receive actual data
+    for (0..length) |i| {
+        buffer[i] = 0;
+    }
     return buffer;
 }
 
