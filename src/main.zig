@@ -25,9 +25,9 @@ fn doubleSha256(data: []u8) [32]u8 {
     return resulthash;
 }
 
-fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
+fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
     var header: [8]u8 = undefined;
-    var n_read = try client.stream.read(header[0..]); // TODO: use readAll?
+    var n_read = try conn.stream.read(header[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == header.len); // XXX
 
@@ -38,7 +38,7 @@ fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
     }
 
     var buffer = try std.heap.page_allocator.alloc(u8, length);
-    n_read = try client.stream.read(buffer[0..length]); // TODO: use readAll?
+    n_read = try conn.stream.read(buffer[0..length]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == buffer.len); // XXX
 
@@ -51,9 +51,9 @@ fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
     return buffer;
 }
 
-fn recvV1MessageFull(client: *const net.Server.Connection) !struct {[]u8, []u8} {
+fn recvV1MessageFull(conn: *const net.Server.Connection) !struct {[]u8, []u8} {
     var net_magic: [4]u8 = undefined;
-    var n_read = try client.stream.read(net_magic[0..]); // TODO: use readAll?
+    var n_read = try conn.stream.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     if (!std.mem.eql(u8, net_magic, NET_MAGIC)) {
         try print("Received V1 message with wrong NET_MAGIC\n", .{});
@@ -61,7 +61,7 @@ fn recvV1MessageFull(client: *const net.Server.Connection) !struct {[]u8, []u8} 
     }
 
     var msg_type_buf: [12]u8 = undefined;
-    n_read = try client.stream.readAll(msg_type_buf[0..]);
+    n_read = try conn.stream.readAll(msg_type_buf[0..]);
     if (n_read == 0) return error.ConnectionClosed;
     var msg_type = msg_type_buf[0..];
     while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
@@ -72,11 +72,11 @@ fn recvV1MessageFull(client: *const net.Server.Connection) !struct {[]u8, []u8} 
         print("{x} ", .{b});
     }
     print("\n", .{});
-    const msg_payload = recvV1MessagePayload(client);
+    const msg_payload = recvV1MessagePayload(conn);
     return .{ msg_type, msg_payload };
 }
 
-fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
+fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     // peek into receiver buffer byte for byte to detect early if the first
     // incoming message is not a bitcoin p2p v1 message; in that case we can't
     // do anything (we wouldn't know the remote destination to send data to) and
@@ -86,7 +86,7 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     try print("Received prefix bytes: ", .{});
     for (0..V1_PREFIX.len) |i| {
         var byte_buf: [1]u8 = undefined;
-        const n_read = try client.stream.read(&byte_buf);
+        const n_read = try proxy_server.stream.read(&byte_buf);
         if (n_read == 0) return error.ConnectionClosed;
         const byte = byte_buf[0];
         try print("{x} ", .{byte});
@@ -99,7 +99,7 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     }
     try print("\n", .{});
 
-    const msg_payload = try recvV1MessagePayload(client);
+    const msg_payload = try recvV1MessagePayload(proxy_server);
     defer std.heap.page_allocator.free(msg_payload);
     try print("Version payload length: {d} bytes\n", .{msg_payload.len});
 
@@ -117,6 +117,13 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     const remote_addr = net.Address.initIp4(remote_ip_bytes.*, remote_port);
     // TODO: decode and print also user agent
     try print("    => Remote address: {f}\n", .{remote_addr});
+
+    // connect to target node
+    var proxy_client = try net.tcpConnectToAddress(remote_addr);
+    defer proxy_client.close();
+    try print("[>] Connected to {f}, initiating BIP324 handshake.\n", .{ remote_addr });
+
+    // TODO: do BIP324 handshake
 }
 
 pub fn main() !void {
@@ -130,11 +137,11 @@ pub fn main() !void {
     try print("Waiting for incoming v1 connections on {f}...\n", .{server.listen_address});
 
     while (true) {
-        const client = try server.accept();
-        defer client.stream.close();
-        try print("[<] New connection from {f}\n", .{client.address});
+        const proxy_server = try server.accept();
+        defer proxy_server.stream.close();
+        try print("[<] New connection from {f}\n", .{proxy_server.address});
         // TODO: start this up in a new thread
-        bip324ProxyHandler(&client) catch {
+        bip324ProxyHandler(&proxy_server) catch {
             try print("Connection was closed.\n", .{});
         };
     }
