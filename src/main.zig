@@ -1,5 +1,6 @@
 const std = @import("std");
 const net = std.net;
+const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
@@ -16,23 +17,37 @@ fn print(comptime fmt: []const u8, args: anytype) !void {
     try stdout.flush();
 }
 
+fn doubleSha256(data: []u8) [32]u8 {
+    var innerhash: [32]u8 = undefined;
+    var resulthash: [32]u8 = undefined;
+    Sha256.hash(data, &innerhash, .{});
+    Sha256.hash(&innerhash, &resulthash, .{});
+    return resulthash;
+}
+
 fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
     var header: [8]u8 = undefined;
-    const n_read = try client.stream.read(header[0..]); // TODO: use readAll?
+    var n_read = try client.stream.read(header[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == header.len); // XXX
 
     const length: u32 = std.mem.readInt(u32, header[0..4], .little);
     if (length > MAX_PROTOCOL_MESSAGE_LENGTH) {
         try print("Received V1 message too large payload size (4 MB)\n", .{});
         return error.ConnectionClosed;
     }
-    try print("received package with length {d}\n", .{length});
 
     var buffer = try std.heap.page_allocator.alloc(u8, length);
-    // TODO: receive actual data
-    for (0..length) |i| {
-        buffer[i] = 0;
+    n_read = try client.stream.read(buffer[0..length]); // TODO: use readAll?
+    if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == buffer.len); // XXX
+
+    const checksum = header[4..8];
+    if (!std.mem.eql(u8, doubleSha256(buffer)[0..4], checksum)) {
+        try print("Received V1 message with incorrect checksum\n", .{});
+        return error.ConnectionClosed;
     }
+
     return buffer;
 }
 
@@ -40,7 +55,7 @@ fn recvV1MessageFull(client: *const net.Server.Connection) !struct {[]u8, []u8} 
     var net_magic: [4]u8 = undefined;
     var n_read = try client.stream.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
-    if (!std.mem.eql(net_magic, NET_MAGIC)) {
+    if (!std.mem.eql(u8, net_magic, NET_MAGIC)) {
         try print("Received V1 message with wrong NET_MAGIC\n", .{});
         return error.ConnectionClosed;
     }
