@@ -103,7 +103,20 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     defer std.heap.page_allocator.free(msg_payload);
     try print("Version payload length: {d} bytes\n", .{msg_payload.len});
 
-    // TODO: decode VERSION message, extract remote_ip
+    // decode VERSION message
+    // TODO: check that VERSION message has minimum needed size
+    const addr_recv = msg_payload[20..46];
+    const remote_addr_ipv6 = addr_recv[8..24];
+    const IPV6_PREFIX: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+    if (!std.mem.eql(u8, remote_addr_ipv6[0..12], &IPV6_PREFIX)) {
+        try print("IPv6 is not supported yet.\n", .{});
+        return error.ConnectionClosed;
+    }
+    const remote_ip_bytes = remote_addr_ipv6[12..16];
+    const remote_port = std.mem.readInt(u16, addr_recv[24..26], .big);
+    const remote_addr = net.Address.initIp4(remote_ip_bytes.*, remote_port);
+    // TODO: decode and print also user agent
+    try print("    => Remote address: {f}\n", .{remote_addr});
 }
 
 pub fn main() !void {
