@@ -15,6 +15,44 @@ fn print(comptime fmt: []const u8, args: anytype) !void {
     try stdout.flush();
 }
 
+fn recvV1MessagePayload(client: *const net.Server.Connection) ![]u8 {
+    var header: [8]u8 = undefined;
+    const n_read = try client.stream.read(header[0..]); // TODO: use readAll?
+    if (n_read == 0) return error.ConnectionClosed;
+
+    const length: u32 = std.mem.readInt(u32, header[0..4], .little);
+    try print("{d}\n", .{length});
+
+    // TODO: fill this etc
+    const buffer = std.heap.page_allocator.alloc(u8, 1024);
+    return buffer;
+}
+
+fn recvV1MessageFull(client: *const net.Server.Connection) !struct {[]u8, []u8} {
+    var net_magic: [4]u8 = undefined;
+    var n_read = try client.stream.read(net_magic[0..]); // TODO: use readAll?
+    if (n_read == 0) return error.ConnectionClosed;
+    if (!std.mem.eql(net_magic, NET_MAGIC)) {
+        try print("Received V1 message with wrong NET_MAGIC\n", .{});
+        return error.ConnectionClosed;
+    }
+
+    var msg_type_buf: [12]u8 = undefined;
+    n_read = try client.stream.readAll(msg_type_buf[0..]);
+    if (n_read == 0) return error.ConnectionClosed;
+    var msg_type = msg_type_buf[0..];
+    while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
+        msg_type = msg_type[0..msg_type.len-1];
+    }
+    print("msgtype: ", .{});
+    for (msg_type) |b| {
+        print("{x} ", .{b});
+    }
+    print("\n", .{});
+    const msg_payload = recvV1MessagePayload(client);
+    return .{ msg_type, msg_payload };
+}
+
 fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     // peek into receiver buffer byte for byte to detect early if the first
     // incoming message is not a bitcoin p2p v1 message; in that case we can't
@@ -22,12 +60,13 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
     // have to close the local connection
     var received_prefix: [16]u8 = undefined;
 
+    try print("Received prefix bytes: ", .{});
     for (0..V1_PREFIX.len) |i| {
         var byte_buf: [1]u8 = undefined;
         const n_read = try client.stream.read(&byte_buf);
         if (n_read == 0) return error.ConnectionClosed;
         const byte = byte_buf[0];
-        try print("byte read: {d}\n", .{byte});
+        try print("{x} ", .{byte});
         if (byte != V1_PREFIX[i]) {
             try print("V1 prefix mismatch after {d} bytes, close connection.\n", .{i+1});
             // TODO: show expected/received byte-strings
@@ -35,6 +74,13 @@ fn bip324ProxyHandler(client: *const net.Server.Connection) !void {
         }
         received_prefix[i] = byte;
     }
+    try print("\n", .{});
+
+    const msg_payload = try recvV1MessagePayload(client);
+    defer std.heap.page_allocator.free(msg_payload);
+    try print("Version payload length: {d} bytes\n", .{msg_payload.len});
+
+    // TODO: decode VERSION message, extract remote_ip
 }
 
 pub fn main() !void {
