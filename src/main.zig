@@ -134,6 +134,8 @@ pub fn main() !void {
         defer client.stream.close();
         try print("[<] New connection from {f}\n", .{client.address});
         // TODO: start this up in a new thread
-        try bip324ProxyHandler(&client);
+        bip324ProxyHandler(&client) catch {
+            try print("Connection was closed.\n", .{});
+        };
     }
 }
