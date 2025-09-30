@@ -173,11 +173,18 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     const responder_L = hkdfSha256(master_key, "responder_L");
     const responder_P = hkdfSha256(master_key, "responder_P");
     const garbage_terminators = hkdfSha256(master_key, "garbage_terminators");
+    const session_id = hkdfSha256(master_key, "session_id");
+    const send_garbage_terminator = garbage_terminators[0..16];
+    const recv_garbage_terminator = garbage_terminators[16..32];
+    // - send garbage terminator, detect partner garbage
+    try proxy_client.writeAll(send_garbage_terminator);
+
     _ = initiator_L;
     _ = initiator_P;
     _ = responder_L;
     _ = responder_P;
-    _ = garbage_terminators;
+    _ = recv_garbage_terminator;
+    _ = session_id;
 }
 
 pub fn main() !void {
