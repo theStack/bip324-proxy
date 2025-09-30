@@ -1,4 +1,6 @@
 const std = @import("std");
+const hmac = std.crypto.auth.hmac; // TODO: needed?
+const hkdf = std.crypto.kdf.hkdf;
 const net = std.net;
 const random = std.crypto.random;
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -26,6 +28,12 @@ fn doubleSha256(data: []u8) [32]u8 {
     var resulthash: [32]u8 = undefined;
     Sha256.hash(data, &innerhash, .{});
     Sha256.hash(&innerhash, &resulthash, .{});
+    return resulthash;
+}
+
+fn hkdfSha256(master_key: [32]u8, info: []const u8) [32]u8 {
+    var resulthash: [32]u8 = undefined;
+    hkdf.HkdfSha256.expand(&resulthash, info, master_key);
     return resulthash;
 }
 
@@ -135,7 +143,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     random.bytes(&seckey);
     const ctx = s.secp256k1_context_create(s.SECP256K1_CONTEXT_NONE);
     defer s.secp256k1_context_destroy(ctx);
-    const ret = s.secp256k1_ellswift_create(ctx, &pubkey_ours, &seckey, null);
+    var ret = s.secp256k1_ellswift_create(ctx, &pubkey_ours, &seckey, null);
     std.debug.assert(ret == 1);
     // - generate random-length garbage
     var garbage_buf: [4096]u8 = undefined;
@@ -151,8 +159,25 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == 64);
     try print("pubkey received!!!!!\n", .{});
-
-    // TODO: perform ECDH
+    // TODO: implement v1 fallback? probably not
+    // - perform ECDH
+    var shared_secret: [32]u8 = undefined;
+    ret = s.secp256k1_ellswift_xdh(ctx, &shared_secret, &pubkey_ours, &pubkey_theirs,
+        &seckey, 0, s.secp256k1_ellswift_xdh_hash_function_bip324, null);
+    std.debug.assert(ret == 1);
+    // - derive key material
+    const salt = "bitcoin_v2_shared_secret" ++ NET_MAGIC;
+    const master_key = hkdf.HkdfSha256.extract(salt[0..], &shared_secret);
+    const initiator_L = hkdfSha256(master_key, "initiator_L");
+    const initiator_P = hkdfSha256(master_key, "initiator_P");
+    const responder_L = hkdfSha256(master_key, "responder_L");
+    const responder_P = hkdfSha256(master_key, "responder_P");
+    const garbage_terminators = hkdfSha256(master_key, "garbage_terminators");
+    _ = initiator_L;
+    _ = initiator_P;
+    _ = responder_L;
+    _ = responder_P;
+    _ = garbage_terminators;
 }
 
 pub fn main() !void {
