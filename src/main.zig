@@ -1,6 +1,7 @@
 const std = @import("std");
-const hmac = std.crypto.auth.hmac; // TODO: needed?
+const chacha = std.crypto.stream.chacha;
 const hkdf = std.crypto.kdf.hkdf;
+const hmac = std.crypto.auth.hmac; // TODO: needed?
 const net = std.net;
 const random = std.crypto.random;
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -187,10 +188,141 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     _ = session_id;
 }
 
+const ChaCha20 = struct {
+    key: [32]u8,
+    buffer: [64]u8,
+    bufleft: usize = 0,
+    nonce: [12]u8,
+    block_counter: u32 = 0,
+
+    pub fn init(key: [32]u8) ChaCha20 {
+        return ChaCha20 {
+            .key = key,
+            .buffer = [_]u8{0} ** 64,
+            .nonce = [_]u8{0} ** 12,
+        };
+    }
+
+    pub fn setKey(c: *ChaCha20, key: [32]u8) void {
+        c.key = key;
+        c.bufleft = 0;
+    }
+
+    pub fn seek(c: *ChaCha20, nonce: [12]u8, block_counter: u32) void {
+        c.nonce = nonce;
+        c.block_counter = block_counter;
+        c.bufleft = 0;
+    }
+
+    pub fn crypt(c: *ChaCha20, in_: []const u8, out_: []u8) void {
+        var in = in_;
+        var out = out_;
+        std.debug.assert(in.len == out.len);
+
+        if (in.len == 0) return;
+        if (c.bufleft > 0) {
+            const reuse = @min(c.bufleft, in.len);
+            for (0..reuse) |i| {
+                out[i] = in[i] ^ c.buffer[64 - c.bufleft + i];
+            }
+            c.bufleft -= reuse;
+            out = out[reuse..];
+            in = in[reuse..];
+        }
+        if (in.len >= 64) {
+            const blocks: u64 = in.len / 64;
+            chacha.ChaCha20IETF.xor(out[0 .. blocks * 64], in[0 .. blocks * 64], c.block_counter, c.key, c.nonce);
+            c.block_counter += @intCast(blocks);
+            out = out[64 * blocks ..];
+            in = in[64 * blocks ..];
+        }
+        if (in.len > 0) {
+            chacha.ChaCha20IETF.stream(&c.buffer, c.block_counter, c.key, c.nonce);
+            c.block_counter += 1;
+            for (0..in.len) |i| {
+                out[i] = in[i] ^ c.buffer[i];
+            }
+            c.bufleft = 64 - in.len;
+        }
+    }
+
+    pub fn stream(c: *ChaCha20, out_: []u8) void {
+        var out = out_;
+        if (out.len == 0) return;
+        if (c.bufleft > 0) {
+            const reuse = @min(c.bufleft, out.len);
+            @memcpy(out[0..reuse], c.buffer[c.buffer.len - c.bufleft .. c.buffer.len - c.bufleft + reuse]);
+            c.bufleft -= reuse;
+            out = out[reuse..];
+        }
+        if (out.len >= 64) {
+            const blocks = out.len / 64;
+            chacha.ChaCha20IETF.stream(out[0 .. blocks * 64], c.block_counter, c.key, c.nonce);
+            c.block_counter += @intCast(blocks);
+            out = out[64 * blocks ..];
+        }
+        if (out.len > 0) {
+            chacha.ChaCha20IETF.stream(&c.buffer, c.block_counter, c.key, c.nonce);
+            c.block_counter += 1;
+            @memcpy(out, c.buffer[0 .. out.len]);
+            c.bufleft = 64 - out.len;
+        }
+    }
+};
+
+const FSChaCha20 = struct {
+    chacha20: ChaCha20,
+    rekey_interval: u64,
+    chunk_counter: u64 = 0,
+    // TODO: introduce rekey_counter to avoid division
+
+    pub fn init(key: [32]u8, rekey_interval: u32) FSChaCha20 {
+        return FSChaCha20 {
+            .chacha20 = ChaCha20.init(key),
+            .rekey_interval = rekey_interval,
+        };
+    }
+
+    pub fn crypt(fsc: *FSChaCha20, in: []const u8, out: []u8) void {
+        std.debug.assert(in.len == out.len);
+
+        fsc.chacha20.crypt(in, out);
+        fsc.chunk_counter += 1;
+        if (fsc.chunk_counter == fsc.rekey_interval) {
+            var new_key: [32]u8 = undefined;
+            fsc.chacha20.stream(&new_key);
+            fsc.chacha20.setKey(new_key);
+            var nonce: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0,0};
+            std.mem.writeInt(u64, nonce[4..12], fsc.chunk_counter / fsc.rekey_interval, .little);
+            fsc.chacha20.seek(nonce, 0);
+            fsc.chunk_counter = 0;
+        }
+    }
+};
+
 pub fn main() !void {
     try print("---------------------\n", .{});
     try print(" BIP324 proxy server \n", .{});
     try print("---------------------\n", .{});
+
+    // // Forward secure ChaCha20
+    // TestFSChaCha20("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    //                "0000000000000000000000000000000000000000000000000000000000000000",
+    //                256,
+    //                "a93df4ef03011f3db95f60d996e1785df5de38fc39bfcb663a47bb5561928349");
+
+    const key2: [32]u8 = ("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++
+                          "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").*;
+    const msg: [32]u8 = ("\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" ++
+                         "\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f").*;
+    var output: [32]u8 = undefined;
+    const rekey_interval: u32 = 256;
+    var fs = FSChaCha20.init(key2, rekey_interval);
+    for (0..rekey_interval) |_| {
+        fs.crypt(&msg, &output);
+    }
+    fs.crypt(&msg, &output);
+    try print("TEST FSChaCha20 result after key rotation: {x}\n", .{output});
 
     const server_addr = try net.Address.parseIp4("127.0.0.1", BIP324_PROXY_PORT);
     var server = try server_addr.listen(.{.reuse_address = true});
