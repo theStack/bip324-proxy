@@ -3,6 +3,7 @@ const chacha = std.crypto.stream.chacha;
 const hkdf = std.crypto.kdf.hkdf;
 const hmac = std.crypto.auth.hmac; // TODO: needed?
 const net = std.net;
+const onetimeauth = std.onetimeauth;
 const random = std.crypto.random;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const s = @cImport({
@@ -297,6 +298,124 @@ const FSChaCha20 = struct {
             fsc.chacha20.seek(nonce, 0);
             fsc.chunk_counter = 0;
         }
+    }
+};
+
+const AEADChaCha20Poly1305 = struct {
+    chacha20: ChaCha20,
+
+    pub fn init(key: [32]u8) AEADChaCha20Poly1305 {
+        return AEADChaCha20Poly1305 {
+            .chacha20 = ChaCha20.init(key),
+        };
+    }
+
+    pub fn setKey(a: *AEADChaCha20Poly1305, key: [32]u8) void {
+        a.chacha20.setKey(key);
+    }
+
+    fn computeTag(a: *AEADChaCha20Poly1305, aad: []u8, cipher: []u8, tag: []u8) void {
+        const PADDING: [16]u8 = [_]u8{0} ** 16;
+        var first_block: [64]u8 = undefined;
+        a.chacha20.stream(first_block);
+
+        // use first 32 bytes as poly1305 key
+        var poly1305 = onetimeauth.Poly1305.init(first_block[0..32]);
+
+        // compute tag
+        // - process padded AAD
+        const aad_padding_length = (16 - aad.len % 16) % 16;
+        poly1305.update(aad);
+        poly1305.update(PADDING[0..aad_padding_length]);
+        // - process padded ciphertext
+        const cipher_padding_length = (16 - cipher.len % 16) % 16;
+        poly1305.update(cipher);
+        poly1305.update(PADDING[0..cipher_padding_length]);
+        // - process AAD and plaintext length
+        var length_desc: [16]u8 = undefined;
+        std.mem.writeInt(u64, length_desc[0..8], aad.len, .little);
+        std.mem.writeInt(u64, length_desc[8..16], cipher.len, .little);
+        poly1305.update(length_desc);
+
+        // output tag
+        poly1305.final(tag);
+    }
+
+    pub fn encrypt(a: *AEADChaCha20Poly1305, plain1: []u8, plain2: []u8, aad: []u8, nonce: [12]u8, cipher: []u8) void {
+        std.debug.assert(cipher.len == plain1.len + plain2.len + 16);
+
+        // encrypt, start at block 1
+        a.chacha20.seek(nonce, 1);
+        a.chacha20.crypt(plain1, cipher[0..plain1.len]);
+        a.chacha20.crypt(plain2, cipher[plain1.len..plain1.len+plain2.len]);
+
+        // seek to block 0, compute tag using key from there
+        a.chacha20.seek(nonce, 0);
+        a.computeTag(aad, cipher[0 .. cipher.len - 16], cipher[cipher.len - 16..]);
+    }
+
+    pub fn decrypt(a: *AEADChaCha20Poly1305, cipher: []u8, aad: []u8, nonce: [12]u8, plain1: []u8, plain2: []u8) bool {
+        std.debug.assert(cipher.len == plain1.len + plain2.len + 16);
+
+        // verify tag, using key from block 0
+        a.chacha20.seek(nonce, 0);
+        var expected_tag: [16]u8 = undefined;
+        a.computeTag(aad, cipher[0 .. cipher.len - 16], &expected_tag);
+        if (!std.mem.eql(u8, expected_tag, cipher[cipher.len - 16..])) { return false; }
+
+        // decrypt, start at block 1
+        a.chacha20.crypt(cipher[0..plain1.len], plain1);
+        a.chacha20.crypt(cipher[plain1.len..plain1.len+plain2.len], plain2);
+    }
+
+    pub fn stream(a: *AEADChaCha20Poly1305, nonce: [12]u8, out: []u8) void {
+        a.chacha20.seek(nonce, 1);
+        a.chacha20.stream(out);
+    }
+};
+
+const FSChaCha20Poly1305 = struct {
+    aead: AEADChaCha20Poly1305,
+    rekey_interval: u32,
+    packet_counter: u32 = 0,
+    // TODO: introduce rekey_counter to avoid division
+
+    pub fn init(key: [32]u8, rekey_interval: u32) FSChaCha20Poly1305 {
+        return FSChaCha20Poly1305 {
+            .aead = AEADChaCha20Poly1305.init(key),
+            .rekey_interval = rekey_interval,
+        };
+    }
+
+    fn nextPacket(fscp: *FSChaCha20Poly1305, nonce: [12]u8) void {
+        fscp.packet_counter += 1;
+        if (fscp.packet_counter == fscp.rekey_interval) {
+            var one_block: [64]u8 = undefined;
+            var new_nonce: [12]u8 = .{0xff,0xff,0xff,0xff,0,0,0,0,0,0,0,0};
+            @memcpy(new_nonce[4..12], nonce[4..12]);
+            fscp.aead.stream(&new_nonce, &one_block);
+            // switch keys
+            fscp.aead.setKey(one_block[0..32]);
+            fscp.packet_counter = 0;
+        }
+    }
+
+    pub fn encrypt(fscp: *FSChaCha20Poly1305, plain1: []u8, plain2: []u8, aad: []u8, cipher: []u8) void {
+        var nonce: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0,0};
+        std.mem.writeInt(u32, nonce[0..4], fscp.packet_counter % fscp.rekey_interval, .little);
+        std.mem.writeInt(u64, nonce[4..12], fscp.packet_counter / fscp.rekey_interval, .little);
+        // TODO: encrypt AEAD
+        _ = plain1; _ = plain2; _ = aad; _ = cipher;
+        fscp.nextPacket(nonce);
+    }
+
+    pub fn decrypt(fscp: *FSChaCha20Poly1305, cipher: []u8, aad: []u8, plain1: []u8, plain2: []u8) void {
+        var nonce: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0,0};
+        std.mem.writeInt(u32, nonce[0..4], fscp.packet_counter % fscp.rekey_interval, .little);
+        std.mem.writeInt(u64, nonce[4..12], fscp.packet_counter / fscp.rekey_interval, .little);
+        // TODO: decrypt AEAD
+        _ = plain1; _ = plain2; _ = aad; _ = cipher;
+        fscp.nextPacket(nonce);
     }
 };
 
