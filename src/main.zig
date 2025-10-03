@@ -101,6 +101,23 @@ fn recvV1MessageFull(conn: *const net.Server.Connection) !struct {[]u8, []u8} {
     return .{ msg_type, msg_payload };
 }
 
+fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, message: []u8, aad: []u8) !void {
+    std.debug.assert(message.len <= MAX_PROTOCOL_MESSAGE_LENGTH); // TODO: check if this is the right limit
+    var plain_len: [3]u8 = undefined;
+    var enc_len: [3]u8 = undefined;
+    std.mem.writeInt(u24, &plain_len, message.len, .little);
+    send_l.crypt(&plain_len, &enc_len);
+    const static_struct = struct {
+        var plain_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined;
+        var enc_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH + 16]u8 = undefined;
+    };
+    static_struct.plain_payload[0] = 0;
+    @memcpy(static_struct.plain_payload[1..1+message.len], message);
+    send_p.encrypt(static_struct.plain_payload, static_struct.plain_payload[0..0], aad, static_struct.enc_payload);
+    try conn.writeAll(enc_len);
+    try conn.writeAll(static_struct.enc_payload);
+}
+
 fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     // peek into receiver buffer byte for byte to detect early if the first
     // incoming message is not a bitcoin p2p v1 message; in that case we can't
