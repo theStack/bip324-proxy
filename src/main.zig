@@ -1,7 +1,6 @@
 const std = @import("std");
 const chacha = std.crypto.stream.chacha;
 const hkdf = std.crypto.kdf.hkdf;
-const hmac = std.crypto.auth.hmac; // TODO: needed?
 const net = std.net;
 const onetimeauth = std.crypto.onetimeauth;
 const random = std.crypto.random;
@@ -25,18 +24,29 @@ fn print(comptime fmt: []const u8, args: anytype) !void {
     try stdout.flush();
 }
 
-fn doubleSha256(data: []u8) [32]u8 {
+fn doubleSha256Prefix(data: []u8) [4]u8 {
     var innerhash: [32]u8 = undefined;
     var resulthash: [32]u8 = undefined;
     Sha256.hash(data, &innerhash, .{});
     Sha256.hash(&innerhash, &resulthash, .{});
-    return resulthash;
+    return resulthash[0..4].*;
 }
 
 fn hkdfSha256(master_key: [32]u8, info: []const u8) [32]u8 {
     var resulthash: [32]u8 = undefined;
     hkdf.HkdfSha256.expand(&resulthash, info, master_key);
     return resulthash;
+}
+
+fn sendV1Message(conn: *const net.Server.Connection, msg_type: []u8, payload: []u8) !void {
+    std.debug.assert(msg_type.len <= 12);
+    std.debug.assert(payload.len <= MAX_PROTOCOL_MESSAGE_LENGTH);
+    var header: [24]u8 = NET_MAGIC ++ ([_]u8{0} ** 20);
+    @memcpy(header[4..4+msg_type.len], msg_type);
+    std.mem.writeInt(u32, header[16..20], payload.len, .little);
+    @memcpy(header[20..24], &doubleSha256Prefix(payload));
+    try conn.writeAll(header);
+    try conn.writeAll(payload);
 }
 
 fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
@@ -57,7 +67,7 @@ fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
     std.debug.assert(n_read == buffer.len); // XXX
 
     const checksum = header[4..8];
-    if (!std.mem.eql(u8, doubleSha256(buffer)[0..4], checksum)) {
+    if (!std.mem.eql(u8, &doubleSha256Prefix(buffer), checksum)) {
         try print("Received V1 message with incorrect checksum\n", .{});
         return error.ConnectionClosed;
     }
