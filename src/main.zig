@@ -61,7 +61,7 @@ fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
         return error.ConnectionClosed;
     }
 
-    var buffer = try std.heap.page_allocator.alloc(u8, length);
+    var buffer = try std.heap.page_allocator.alloc(u8, length); // TODO: avoid dynamic memory allocations?
     n_read = try conn.stream.read(buffer[0..length]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == buffer.len); // XXX
@@ -116,6 +116,35 @@ fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *
     send_p.encrypt(static_struct.plain_payload, static_struct.plain_payload[0..0], aad, static_struct.enc_payload);
     try conn.writeAll(enc_len);
     try conn.writeAll(static_struct.enc_payload);
+}
+
+fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305, aad: []u8, out: *u8) !void {
+    var enc_len: [3]u8 = undefined;
+    var plain_len: [3]u8 = undefined;
+    var n_read = try conn.stream.read(&enc_len); // TODO: use readAll?
+    if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == plain_len.len); // XXX
+    recv_l.crypt(&enc_len, &plain_len);
+    const len = std.mem.readInt(u24, &plain_len, .little);
+
+    const static_struct = struct {
+        var enc_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH + 16]u8 = undefined;
+        var plain_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined;
+    };
+    n_read = try.conn.stream.read(static_struct.enc_payload[0..1+len+16]); // TODO: use readAll?
+    if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == 1+len+16);
+
+    // decrypt
+    const ret = recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], static_struct.play_load[0..0]);
+    if (!ret) {
+        try print("Couldn't decrypt V2 message\n", .{});
+        return error.ConnectionClosed;
+    }
+    if (static_struct.plain_payload[0] != 0) {
+        try print("Received V2 message with invalid header version byte {x}\n", .{static_struct.plain_payload[0]});
+    }
+    @memcpy(out[0..len], static_struct.plain_payload[1..1+len]);
 }
 
 fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
