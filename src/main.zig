@@ -15,6 +15,13 @@ const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
 const V1_PREFIX: [16]u8 = NET_MAGIC ++ .{'v','e','r','s','i','o','n',0,0,0,0,0};
 const MAX_PROTOCOL_MESSAGE_LENGTH: u32 = 4 * 1000 * 1000;
 
+const BIP324_SHORTID_MSGTYPES = [_][]const u8 {
+    "addr", "block", "blocktxn", "cmpctblock", "feefilter", "filteradd", "filterclear", "filterload",
+    "getblocks", "getblocktxn", "getdata", "getheaders", "headers", "inv", "mempool", "merkleblock",
+    "notfound", "ping", "pong", "sendcmpct", "tx", "getcfilters", "cfilter", "getcfheaders", "cfheaders",
+    "getcfcheckpt", "cfcheckpt", "addrv2",
+};
+
 var stdout_buf: [1024]u8 = undefined;
 var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
 const stdout = &stdout_writer.interface;
@@ -145,6 +152,30 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
         try print("Received V2 message with invalid header version byte {x}\n", .{static_struct.plain_payload[0]});
     }
     @memcpy(out[0..len], static_struct.plain_payload[1..1+len]);
+}
+
+// TODO: collect conn, send_l, send_p, recv_l and recv_p in a struct
+fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg_type: []u8, payload: []u8) !void {
+    std.debug.assert(msg_type.len <= 12);
+    var header_buf: [13]u8 = [_]u8{0} ** 13;
+    var header: []u8 = header_buf[0..0];
+    for (0..BIP324_SHORTID_MSGTYPES.len) |i| {
+        if (std.mem.eql(BIP324_SHORTID_MSGTYPES[i], msg_type)) {
+            header_buf[0] = i+1;
+            header = header_buf[0..1];
+            break;
+        }
+    }
+    if (header.len == 0) { // unknown type, use long encoding
+        header_buf[0] = 0;
+        @memcpy(header_buf[1..1+msg_type.len], msg_type);
+    }
+
+    _ = conn; _ = send_l; _ = send_p; _ = payload;
+}
+
+fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) ![]u8 {
+    _ = conn; _ = recv_l; _ = recv_p;
 }
 
 fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
