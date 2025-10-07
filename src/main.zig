@@ -182,26 +182,24 @@ fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers
         return error.ConnectionClosed;
     }
 
-    const static_struct = struct {
-        var enc_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH + 16]u8 = undefined;
-        var plain_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined;
-    };
-    n_read = try.conn.stream.read(static_struct.enc_payload[0..1+len+16]); // TODO: use readAll?
+    var decrypt_buffer = try std.heap.page_allocator.alloc(u8, 1 + len + 16);
+    defer std.heap.page_allocator.destroy(decrypt_buffer[0..]);
+    n_read = try.conn.stream.read(decrypt_buffer); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == 1+len+16);
+    std.debug.assert(n_read == decrypt_buffer.len);
 
     // decrypt
-    const ret = bip324_ciphers.recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], &.{});
+    var plain = try std.heap.page_allocator.alloc(u8, len);
+    errdefer std.heap.page_allocator.destroy(plain);
+    const ret = bip324_ciphers.recv_p.decrypt(decrypt_buffer, aad, plain[0..], &.{});
     if (!ret) {
         try print("Couldn't decrypt V2 message\n", .{});
         return error.ConnectionClosed;
     }
-    if (static_struct.plain_payload[0] != 0) {
-        try print("Received V2 message with invalid header version byte {x}\n", .{static_struct.plain_payload[0]});
+    if (plain[0] != 0) {
+        try print("Received V2 message with invalid header version byte {x}\n", .{plain[0]});
     }
-    var buffer = try std.heap.page_allocator.alloc(u8, len); // TODO: avoid dynamic memory allocations?
-    @memcpy(&buffer, static_struct.plain_payload[1..1+len]);
-    return buffer;
+    return plain;
 }
 
 fn sendV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
@@ -230,21 +228,27 @@ fn sendV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciph
     try bip324Send(conn, bip324_ciphers, complete_msg, &.{});
 }
 
-fn recvV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers) !struct {[]u8, []u8} {
+fn recvV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers) !*BitcoinMessage {
     const complete_msg = try bip324Recv(conn, bip324_ciphers, &.{});
+    defer std.heap.page_allocator.destroy(complete_msg);
+    var msg_type: []u8 = &.{};
+    var payload: []u8 = &.{};
     if (1 <= complete_msg[0] and complete_msg[0] <= BIP324_SHORTID_MSGTYPES.len) {
-        return .{ BIP324_SHORTID_MSGTYPES[complete_msg[0]-1], complete_msg[1..] };
+        msg_type = BIP324_SHORTID_MSGTYPES[complete_msg[0]-1];
+        payload = complete_msg[1..];
     } else if (complete_msg[0] == 0) {
-        var msg_type = complete_msg[0..12];
+        msg_type = complete_msg[0..12];
         while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
             msg_type = msg_type[0..msg_type.len-1];
         }
-        // TODO: meeeeh, where to allocate the memory for the message type?
-        return .{ msg_type, complete_msg[12..] };
+        payload = complete_msg[12..];
     } else {
         try print("Received V2 message with invalid type {d}\n", .{ complete_msg[0] });
         return error.ConnectionError;
     }
+    const msg = std.heap.page_allocator.create(BitcoinMessage);
+    msg.* = BitcoinMessage.init(msg_type, payload);
+    return msg;
 }
 
 fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
@@ -666,6 +670,5 @@ pub fn main() !void {
     }
 }
 
-// TODO: finish v2 receiving functions
 // TODO: implement actual proxy select() loop, converting in both v1/v2 directions
 // TODO: remove crypto testing code, if it works
