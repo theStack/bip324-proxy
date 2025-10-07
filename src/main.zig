@@ -66,11 +66,14 @@ fn hkdfSha256(master_key: [32]u8, info: []const u8) [32]u8 {
     return resulthash;
 }
 
-fn sendV1Message(conn: *const net.Server.Connection, msg_type: []u8, payload: []u8) !void {
-    std.debug.assert(msg_type.len <= 12);
-    std.debug.assert(payload.len <= MAX_PROTOCOL_MESSAGE_LENGTH);
-    var header: [24]u8 = NET_MAGIC ++ ([_]u8{0} ** 20);
-    @memcpy(header[4..4+msg_type.len], msg_type);
+fn sendV1Message(conn: *const net.Server.Connection, msg: *const BitcoinMessage) !void {
+    const msg_type_raw = msg.getMsgTypeRaw();
+    std.debug.assert(msg_type_raw.len == 12);
+    const payload = msg.getPayload();
+
+    var header: [24]u8 = undefined;
+    @memcpy(header[0..4], NET_MAGIC);
+    @memcpy(header[4..16], msg_type_raw);
     std.mem.writeInt(u32, header[16..20], payload.len, .little);
     @memcpy(header[20..24], &doubleSha256Prefix(payload));
     try conn.writeAll(header);
