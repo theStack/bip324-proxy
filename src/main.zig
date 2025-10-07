@@ -192,8 +192,10 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
 }
 
 // TODO: collect conn, send_l, send_p, recv_l and recv_p in a struct
-fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg_type: []u8, payload: []u8) !void {
-    std.debug.assert(msg_type.len <= 12);
+fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg: *const BitcoinMessage) !void {
+    const msg_type = msg.getMsgType();
+    const payload = msg.getPayload();
+
     var header_buf: [13]u8 = [_]u8{0} ** 13;
     var header: []u8 = header_buf[0..0];
     for (0..BIP324_SHORTID_MSGTYPES.len) |i| {
@@ -209,10 +211,11 @@ fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p
         header = &header_buf;
     }
 
-    var complete_message_buf: [MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined; // TODO: enough?
-    @memcpy(complete_message_buf[0..header.len], header);
-    @memcpy(complete_message_buf[header.len..header.len+payload.len], payload);
-    try bip324Send(conn, send_l, send_p, complete_message_buf[0..header.len+payload.len], complete_message_buf[0..0]);
+    var complete_msg = try std.heap.page_allocator.alloc(u8, header.len + payload.getPayload().len);
+    defer std.heap.page_allocator.destroy(complete_msg);
+    @memcpy(complete_msg[0..header.len], header);
+    @memcpy(complete_msg[header.len..header.len+payload.len], payload);
+    try bip324Send(conn, send_l, send_p, complete_msg, &.{});
 }
 
 fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) !struct {[]u8, []u8} {
