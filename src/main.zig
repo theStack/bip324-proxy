@@ -139,25 +139,39 @@ fn recvV1MessageFull(conn: *const net.Server.Connection) !*BitcoinMessage {
     return &msg;
 }
 
-fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg: []u8, aad: []u8) !void {
+const BIP324Ciphers = struct {
+    send_l: FSChaCha20,
+    send_p: FSChaCha20Poly1305,
+    recv_l: FSChaCha20,
+    recv_p: FSChaCha20Poly1305,
+
+    fn init(send_l: *const FSChaCha20, send_p: *const FSChaCha20Poly1305,
+            recv_l: *const FSChaCha20, recv_p: *const FSChaCha20Poly1305) BIP324Ciphers {
+        return BIP324Ciphers {
+            .send_l = send_l.*, .send_p = send_p.*, .recv_l = recv_l.*, .recv_p = recv_p.*
+        };
+    }
+};
+
+fn bip324Send(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, msg: []u8, aad: []u8) !void {
     var plain_len: [3]u8 = undefined;
     std.mem.writeInt(u24, &plain_len, msg.len, .little);
     var raw_bytes = try std.heap.page_allocator.alloc(u8, plain_len.len + 1 + msg.len + 16);
     defer std.heap.page_allocator.destroy(raw_bytes);
-    send_l.crypt(&plain_len, raw_bytes[0..3]);
+    bip324_ciphers.send_l.crypt(&plain_len, raw_bytes[0..3]);
     raw_bytes[4] = 0;
     @memcpy(raw_bytes[4..4+msg.len], msg);
-    send_p.encrypt(raw_bytes[3..4+msg.len], &.{}, aad, raw_bytes[3..]);
+    bip324_ciphers.send_p.encrypt(raw_bytes[3..4+msg.len], &.{}, aad, raw_bytes[3..]);
     try conn.writeAll(raw_bytes);
 }
 
-fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305, aad: []u8) ![]u8 {
+fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, aad: []u8) ![]u8 {
     var enc_len: [3]u8 = undefined;
     var plain_len: [3]u8 = undefined;
     var n_read = try conn.stream.read(&enc_len); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == plain_len.len); // XXX
-    recv_l.crypt(&enc_len, &plain_len);
+    bip324_ciphers.recv_l.crypt(&enc_len, &plain_len);
     const len = std.mem.readInt(u24, &plain_len, .little);
     if (len > MAX_PROTOCOL_MESSAGE_LENGTH) {
         try print("Received V2 message too large payload size (4 MB)\n", .{});
@@ -173,7 +187,7 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
     std.debug.assert(n_read == 1+len+16);
 
     // decrypt
-    const ret = recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], &.{});
+    const ret = bip324_ciphers.recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], &.{});
     if (!ret) {
         try print("Couldn't decrypt V2 message\n", .{});
         return error.ConnectionClosed;
@@ -186,8 +200,7 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
     return buffer;
 }
 
-// TODO: collect conn, send_l, send_p, recv_l and recv_p in a struct
-fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg: *const BitcoinMessage) !void {
+fn sendV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
     const msg_type = msg.getMsgType();
     const payload = msg.getPayload();
 
@@ -210,11 +223,11 @@ fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p
     defer std.heap.page_allocator.destroy(complete_msg);
     @memcpy(complete_msg[0..header.len], header);
     @memcpy(complete_msg[header.len..header.len+payload.len], payload);
-    try bip324Send(conn, send_l, send_p, complete_msg, &.{});
+    try bip324Send(conn, bip324_ciphers, complete_msg, &.{});
 }
 
-fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) !struct {[]u8, []u8} {
-    const complete_msg = try bip324Recv(conn, recv_l, recv_p, &.{});
+fn recvV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers) !struct {[]u8, []u8} {
+    const complete_msg = try bip324Recv(conn, bip324_ciphers, &.{});
     if (1 <= complete_msg[0] and complete_msg[0] <= BIP324_SHORTID_MSGTYPES.len) {
         return .{ BIP324_SHORTID_MSGTYPES[complete_msg[0]-1], complete_msg[1..] };
     } else if (complete_msg[0] == 0) {
@@ -651,7 +664,6 @@ pub fn main() !void {
     }
 }
 
-// TODO: create `BIP324KeyMaterial` structure containing all `FSChaCha20{Poly1305,}` instances etc.
 // TODO: finish v2 receiving functions
 // TODO: implement actual proxy select() loop, converting in both v1/v2 directions
 // TODO: remove crypto testing code, if it works
