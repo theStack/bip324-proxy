@@ -651,3 +651,9 @@ pub fn main() !void {
         };
     }
 }
+
+// TODO: replace empty slices with `&.{}`
+// TODO: create `BIP324KeyMaterial` structure containing all `FSChaCha20{Poly1305,}` instances etc.
+// TODO: finish v2 receiving functions
+// TODO: implement actual proxy select() loop, converting in both v1/v2 directions
+// TODO: remove crypto testing code, if it works
