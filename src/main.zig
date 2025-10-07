@@ -71,7 +71,7 @@ fn hkdfSha256(master_key: [32]u8, info: []const u8) [32]u8 {
     return resulthash;
 }
 
-fn sendV1Message(conn: *const net.Server.Connection, msg: *const BitcoinMessage) !void {
+fn sendV1Message(conn: *const net.Stream, msg: *const BitcoinMessage) !void {
     const msg_type_raw = msg.getMsgTypeRaw();
     std.debug.assert(msg_type_raw.len == 12);
     const payload = msg.getPayload();
@@ -157,11 +157,11 @@ const BIP324Ciphers = struct {
     }
 };
 
-fn bip324Send(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, msg: []u8, aad: []u8) !void {
+fn bip324Send(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: []u8, aad: []u8) !void {
     var plain_len: [3]u8 = undefined;
-    std.mem.writeInt(u24, &plain_len, msg.len, .little);
+    std.mem.writeInt(u24, &plain_len, @intCast(msg.len), .little);
     var raw_bytes = try std.heap.page_allocator.alloc(u8, plain_len.len + 1 + msg.len + 16);
-    defer std.heap.page_allocator.destroy(raw_bytes);
+    defer std.heap.page_allocator.free(raw_bytes);
     bip324_ciphers.send_l.crypt(&plain_len, raw_bytes[0..3]);
     raw_bytes[4] = 0;
     @memcpy(raw_bytes[4..4+msg.len], msg);
@@ -183,14 +183,14 @@ fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers
     }
 
     var decrypt_buffer = try std.heap.page_allocator.alloc(u8, 1 + len + 16);
-    defer std.heap.page_allocator.destroy(decrypt_buffer[0..]);
+    defer std.heap.page_allocator.free(decrypt_buffer[0..]);
     n_read = try.conn.stream.read(decrypt_buffer); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == decrypt_buffer.len);
 
     // decrypt
     var plain = try std.heap.page_allocator.alloc(u8, len);
-    errdefer std.heap.page_allocator.destroy(plain);
+    errdefer std.heap.page_allocator.free(plain);
     const ret = bip324_ciphers.recv_p.decrypt(decrypt_buffer, aad, plain[0..], &.{});
     if (!ret) {
         try print("Couldn't decrypt V2 message\n", .{});
@@ -202,7 +202,7 @@ fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers
     return plain;
 }
 
-fn sendV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
+fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
     const msg_type = msg.getMsgType();
     const payload = msg.getPayload();
 
@@ -222,7 +222,7 @@ fn sendV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciph
     }
 
     var complete_msg = try std.heap.page_allocator.alloc(u8, header.len + payload.getPayload().len);
-    defer std.heap.page_allocator.destroy(complete_msg);
+    defer std.heap.page_allocator.free(complete_msg);
     @memcpy(complete_msg[0..header.len], header);
     @memcpy(complete_msg[header.len..header.len+payload.len], payload);
     try bip324Send(conn, bip324_ciphers, complete_msg, &.{});
@@ -341,12 +341,13 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     const session_id = hkdfSha256(master_key, "session_id");
     const send_garbage_terminator = garbage_terminators[0..16];
     const recv_garbage_terminator = garbage_terminators[16..32];
-    // - send garbage terminator, detect partner garbage
+    var bip324_ciphers = BIP324Ciphers.init(&initiator_L, &initiator_P, &responder_L, &responder_P);
+    // - send garbage terminator
     try proxy_client.writeAll(send_garbage_terminator);
     try print("garbage terminator sent!\n", .{});
-
-    const bip324_ciphers = BIP324Ciphers.init(&initiator_L, &initiator_P, &responder_L, &responder_P);
-    _ = bip324_ciphers;
+    try bip324Send(&proxy_client, &bip324_ciphers, &.{}, garbage);
+    try print("garbage aad sent!\n", .{});
+    // - TODO: detect partner garbage
     _ = recv_garbage_terminator;
     _ = session_id;
 }
