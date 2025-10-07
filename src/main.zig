@@ -145,10 +145,14 @@ const BIP324Ciphers = struct {
     recv_l: FSChaCha20,
     recv_p: FSChaCha20Poly1305,
 
-    fn init(send_l: *const FSChaCha20, send_p: *const FSChaCha20Poly1305,
-            recv_l: *const FSChaCha20, recv_p: *const FSChaCha20Poly1305) BIP324Ciphers {
+    fn init(send_l_key: *const [32]u8, send_p_key: *const [32]u8,
+            recv_l_key: *const [32]u8, recv_p_key: *const [32]u8) BIP324Ciphers {
+        const REKEY_INTERVAL: u32 = 224;
         return BIP324Ciphers {
-            .send_l = send_l.*, .send_p = send_p.*, .recv_l = recv_l.*, .recv_p = recv_p.*
+            .send_l = FSChaCha20.init(send_l_key.*, REKEY_INTERVAL),
+            .send_p = FSChaCha20Poly1305.init(send_p_key.*, REKEY_INTERVAL),
+            .recv_l = FSChaCha20.init(recv_l_key.*, REKEY_INTERVAL),
+            .recv_p = FSChaCha20Poly1305.init(recv_p_key.*, REKEY_INTERVAL),
         };
     }
 };
@@ -337,10 +341,8 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try proxy_client.writeAll(send_garbage_terminator);
     try print("garbage terminator sent!\n", .{});
 
-    _ = initiator_L;
-    _ = initiator_P;
-    _ = responder_L;
-    _ = responder_P;
+    const bip324_ciphers = BIP324Ciphers.init(&initiator_L, &initiator_P, &responder_L, &responder_P);
+    _ = bip324_ciphers;
     _ = recv_garbage_terminator;
     _ = session_id;
 }
