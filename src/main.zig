@@ -320,7 +320,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("our garbage sent!\n", .{});
     // - receive their pubkey
     var pubkey_theirs: [64]u8 = undefined;
-    const n_read = try proxy_client.read(pubkey_theirs[0..]);
+    var n_read = try proxy_client.read(pubkey_theirs[0..]);
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == 64);
     try print("their pubkey received!\n", .{});
@@ -347,8 +347,27 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("garbage terminator sent!\n", .{});
     try bip324Send(&proxy_client, &bip324_ciphers, &.{}, garbage);
     try print("garbage aad sent!\n", .{});
-    // - TODO: detect partner garbage
-    _ = recv_garbage_terminator;
+    // - detect partner garbage
+    var garbage_and_term_buf: [4095+16]u8 = undefined;
+    n_read = try proxy_client.read(garbage_and_term_buf[0..16]);
+    if (n_read == 0) return error.ConnectionClosed;
+    std.debug.assert(n_read == 16); // XXX
+    var garbage_term_found = false;
+    for (0..4096) |i| {
+        if (std.mem.eql(u8, garbage_and_term_buf[i..i+16], recv_garbage_terminator)) {
+            garbage_term_found = true;
+            break;
+        }
+        n_read = try proxy_client.read(garbage_and_term_buf[i+16..i+16+1]);
+        if (n_read == 0) return error.ConnectionClosed;
+        std.debug.assert(n_read == 1); // XXX
+    }
+    if (garbage_term_found) {
+        try print("YAY, garbage terminator found!\n", .{});
+    } else {
+        try print("NO, garbage terminator not found :(:(:(\n", .{});
+    }
+
     _ = session_id;
 }
 
@@ -671,5 +690,6 @@ pub fn main() !void {
     }
 }
 
+// TODO: receive initial V2 version message
 // TODO: implement actual proxy select() loop, converting in both v1/v2 directions
 // TODO: remove crypto testing code, if it works
