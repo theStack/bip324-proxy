@@ -28,23 +28,28 @@ const stdout = &stdout_writer.interface;
 
 const BitcoinMessage = struct {
     msg_type_buf: [12]u8,
-    msg_type_len: usize = 0,
+    msg_type: []u8,
     payload_buf: [MAX_PROTOCOL_MESSAGE_LENGTH]u8,
-    payload_len: usize = 0,
+    payload: []u8,
 
-    fn init(msg_type: []u8, payload: usize) BitcoinMessage {
+    fn init(msg_type: []const u8, payload: []u8) BitcoinMessage {
         var new: BitcoinMessage = undefined;
         @memcpy(new.msg_type_buf[0..msg_type.len], msg_type);
         @memset(new.msg_type_buf[msg_type.len..], 0);
-        new.msg_type_len = msg_type.len;
         @memcpy(new.payload_buf[0..payload.len], payload);
-        new.payload_len = payload.len;
+        new.msg_type = new.msg_type_buf[0..msg_type.len];
+        new.payload = new.payload_buf[0..payload.len];
         return new;
     }
 
-    pub fn getMsgType(m: *const BitcoinMessage)    []u8 { return m.msg_type_buf[0..m.msg_type_len]; }
+    pub fn getMsgType(m: *const BitcoinMessage)    []u8 { return m.msg_type; }
     pub fn getMsgTypeRaw(m: *const BitcoinMessage) []u8 { return &m.msg_type_buf; }
-    pub fn getPayload(m: *const BitcoinMessage)    []u8 { return m.payload_buf[0..m.payload_buf_len]; }
+    pub fn getPayload(m: *const BitcoinMessage)    []u8 { return m.payload; }
+    pub fn getPayloadPtr(m: *BitcoinMessage) *[MAX_PROTOCOL_MESSAGE_LENGTH]u8  { return &m.payload_buf; }
+    pub fn setPayloadLen(m: *BitcoinMessage, len: usize) void {
+        std.debug.assert(len <= MAX_PROTOCOL_MESSAGE_LENGTH);
+        m.payload = m.payload_buf[0..len];
+    }
 };
 
 fn print(comptime fmt: []const u8, args: anytype) !void {
@@ -80,7 +85,7 @@ fn sendV1Message(conn: *const net.Server.Connection, msg: *const BitcoinMessage)
     try conn.writeAll(payload);
 }
 
-fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
+fn recvV1MessagePayload(conn: *const net.Server.Connection, msg: *BitcoinMessage) !void {
     var header: [8]u8 = undefined;
     var n_read = try conn.stream.read(header[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
@@ -92,21 +97,20 @@ fn recvV1MessagePayload(conn: *const net.Server.Connection) ![]u8 {
         return error.ConnectionClosed;
     }
 
-    var buffer = try std.heap.page_allocator.alloc(u8, length); // TODO: avoid dynamic memory allocations?
-    n_read = try conn.stream.read(buffer[0..length]); // TODO: use readAll?
+    const payload_ptr = msg.getPayloadPtr();
+    n_read = try conn.stream.read(payload_ptr[0..length]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == buffer.len); // XXX
+    std.debug.assert(n_read == length); // XXX
+    msg.setPayloadLen(length);
 
     const checksum = header[4..8];
-    if (!std.mem.eql(u8, &doubleSha256Prefix(buffer), checksum)) {
+    if (!std.mem.eql(u8, &doubleSha256Prefix(msg.getPayload()), checksum)) {
         try print("Received V1 message with incorrect checksum\n", .{});
         return error.ConnectionClosed;
     }
-
-    return buffer;
 }
 
-fn recvV1MessageFull(conn: *const net.Server.Connection) !struct {[]u8, []u8} {
+fn recvV1MessageFull(conn: *const net.Server.Connection) !*BitcoinMessage {
     var net_magic: [4]u8 = undefined;
     var n_read = try conn.stream.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
@@ -128,8 +132,11 @@ fn recvV1MessageFull(conn: *const net.Server.Connection) !struct {[]u8, []u8} {
         print("{x} ", .{b});
     }
     print("\n", .{});
-    const msg_payload = recvV1MessagePayload(conn);
-    return .{ msg_type, msg_payload };
+    var msg = std.heap.page_allocator.create(BitcoinMessage);
+    errdefer std.heap.page_allocator.destroy(msg);
+    msg.* = BitcoinMessage.init(msg_type, *.{});
+    try recvV1MessagePayload(conn, &msg);
+    return &msg;
 }
 
 fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, message: []u8, aad: []u8) !void {
@@ -249,8 +256,9 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     }
     try print("\n", .{});
 
-    const msg_payload = try recvV1MessagePayload(proxy_server);
-    defer std.heap.page_allocator.free(msg_payload);
+    var first_msg = BitcoinMessage.init("version", &.{});
+    try recvV1MessagePayload(proxy_server, &first_msg);
+    const msg_payload = first_msg.getPayload();
     try print("Version payload length: {d} bytes\n", .{msg_payload.len});
 
     // decode VERSION message
@@ -289,13 +297,15 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     const garbage = garbage_buf[0..garbage_len];
     // - send our pubkey + garbage
     try proxy_client.writeAll(&pubkey_ours);
+    try print("our pubkey sent!\n", .{});
     try proxy_client.writeAll(garbage);
+    try print("our garbage sent!\n", .{});
     // - receive their pubkey
     var pubkey_theirs: [64]u8 = undefined;
     const n_read = try proxy_client.read(pubkey_theirs[0..]);
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == 64);
-    try print("pubkey received!!!!!\n", .{});
+    try print("their pubkey received!\n", .{});
     // TODO: implement v1 fallback? probably not
     // - perform ECDH
     var shared_secret: [32]u8 = undefined;
@@ -315,6 +325,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     const recv_garbage_terminator = garbage_terminators[16..32];
     // - send garbage terminator, detect partner garbage
     try proxy_client.writeAll(send_garbage_terminator);
+    try print("garbage terminator sent!\n", .{});
 
     _ = initiator_L;
     _ = initiator_P;
