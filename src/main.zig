@@ -173,7 +173,7 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
     std.debug.assert(n_read == 1+len+16);
 
     // decrypt
-    const ret = recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], static_struct.play_load[0..0]);
+    const ret = recv_p.decrypt(static_struct.enc_payload[0..1+len+16], aad, static_struct.plain_payload[0..1+len], &.{});
     if (!ret) {
         try print("Couldn't decrypt V2 message\n", .{});
         return error.ConnectionClosed;
@@ -192,7 +192,7 @@ fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p
     const payload = msg.getPayload();
 
     var header_buf: [13]u8 = [_]u8{0} ** 13;
-    var header: []u8 = header_buf[0..0];
+    var header: []u8 = &.{};
     for (0..BIP324_SHORTID_MSGTYPES.len) |i| {
         if (std.mem.eql(BIP324_SHORTID_MSGTYPES[i], msg_type)) {
             header_buf[0] = i+1;
@@ -214,8 +214,7 @@ fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p
 }
 
 fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) !struct {[]u8, []u8} {
-    var dummy_buf: [1]u8 = undefined;
-    const complete_msg = try bip324Recv(conn, recv_l, recv_p, dummy_buf[0..0]);
+    const complete_msg = try bip324Recv(conn, recv_l, recv_p, &.{});
     if (1 <= complete_msg[0] and complete_msg[0] <= BIP324_SHORTID_MSGTYPES.len) {
         return .{ BIP324_SHORTID_MSGTYPES[complete_msg[0]-1], complete_msg[1..] };
     } else if (complete_msg[0] == 0) {
@@ -619,24 +618,24 @@ pub fn main() !void {
     var fscp = FSChaCha20Poly1305.init(newkey, 224);
     // dummy encryptions first
     for (0..msg_idx) |_| {
-        fscp.encrypt(dummy_tag[0..0], dummy_tag[0..0], dummy_tag[0..0], &dummy_tag);
+        fscp.encrypt(&.{}, &.{}, &.{}, &dummy_tag);
     }
     try print("dummy tag after all iterations: {x}\n", .{dummy_tag});
     // single encrypt
-    fscp.encrypt(&plain, plain[0..0], aad, &cipher);
-    //fscp.encrypt(plain[0..0], &plain, aad, &cipher);
+    fscp.encrypt(&plain, &.{}, aad, &cipher);
+    //fscp.encrypt(&.{}, &plain, aad, &cipher);
     try print("TEST FSChaCha20Poly1305 result after single encryption: {x}\n", .{cipher});
 
     // dummy decryptions
     var fscp_dec = FSChaCha20Poly1305.init(newkey, 224);
     for (0..msg_idx) |_| {
         //try print("iteration {d}\n", .{i});
-        _ = fscp_dec.decrypt(&dummy_tag, dummy_tag[0..0], dummy_tag[0..0], dummy_tag[0..0]);
+        _ = fscp_dec.decrypt(&dummy_tag, &.{}, &.{}, &.{});
         //try print("done\n", .{});
         //std.debug.assert(ret);
     }
     var decipher: [64]u8 = undefined;
-    const ret = fscp_dec.decrypt(&cipher, aad, &decipher, decipher[0..0]);
+    const ret = fscp_dec.decrypt(&cipher, aad, &decipher, &.{});
     try print("ret ===== {}\n", .{ret});
     const retret = std.mem.eql(u8, &decipher, &plain);
     try print("retret ===== {}\n", .{retret});
@@ -652,7 +651,6 @@ pub fn main() !void {
     }
 }
 
-// TODO: replace empty slices with `&.{}`
 // TODO: create `BIP324KeyMaterial` structure containing all `FSChaCha20{Poly1305,}` instances etc.
 // TODO: finish v2 receiving functions
 // TODO: implement actual proxy select() loop, converting in both v1/v2 directions
