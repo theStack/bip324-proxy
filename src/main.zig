@@ -125,7 +125,7 @@ fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *
     try conn.writeAll(static_struct.enc_payload);
 }
 
-fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305, aad: []u8, out: *u8) !void {
+fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305, aad: []u8) ![]u8 {
     var enc_len: [3]u8 = undefined;
     var plain_len: [3]u8 = undefined;
     var n_read = try conn.stream.read(&enc_len); // TODO: use readAll?
@@ -133,6 +133,10 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
     std.debug.assert(n_read == plain_len.len); // XXX
     recv_l.crypt(&enc_len, &plain_len);
     const len = std.mem.readInt(u24, &plain_len, .little);
+    if (len > MAX_PROTOCOL_MESSAGE_LENGTH) {
+        try print("Received V2 message too large payload size (4 MB)\n", .{});
+        return error.ConnectionClosed;
+    }
 
     const static_struct = struct {
         var enc_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH + 16]u8 = undefined;
@@ -151,7 +155,9 @@ fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *
     if (static_struct.plain_payload[0] != 0) {
         try print("Received V2 message with invalid header version byte {x}\n", .{static_struct.plain_payload[0]});
     }
-    @memcpy(out[0..len], static_struct.plain_payload[1..1+len]);
+    var buffer = try std.heap.page_allocator.alloc(u8, len); // TODO: avoid dynamic memory allocations?
+    @memcpy(&buffer, static_struct.plain_payload[1..1+len]);
+    return buffer;
 }
 
 // TODO: collect conn, send_l, send_p, recv_l and recv_p in a struct
@@ -169,13 +175,31 @@ fn sendV2Message(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p
     if (header.len == 0) { // unknown type, use long encoding
         header_buf[0] = 0;
         @memcpy(header_buf[1..1+msg_type.len], msg_type);
+        header = &header_buf;
     }
 
-    _ = conn; _ = send_l; _ = send_p; _ = payload;
+    var complete_message_buf: [MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined; // TODO: enough?
+    @memcpy(complete_message_buf[0..header.len], header);
+    @memcpy(complete_message_buf[header.len..header.len+payload.len], payload);
+    try bip324Send(conn, send_l, send_p, complete_message_buf[0..header.len+payload.len], complete_message_buf[0..0]);
 }
 
-fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) ![]u8 {
-    _ = conn; _ = recv_l; _ = recv_p;
+fn recvV2Message(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305) !struct {[]u8, []u8} {
+    var dummy_buf: [1]u8 = undefined;
+    const complete_msg = try bip324Recv(conn, recv_l, recv_p, dummy_buf[0..0]);
+    if (1 <= complete_msg[0] and complete_msg[0] <= BIP324_SHORTID_MSGTYPES.len) {
+        return .{ BIP324_SHORTID_MSGTYPES[complete_msg[0]-1], complete_msg[1..] };
+    } else if (complete_msg[0] == 0) {
+        var msg_type = complete_msg[0..12];
+        while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
+            msg_type = msg_type[0..msg_type.len-1];
+        }
+        // TODO: meeeeh, where to allocate the memory for the message type?
+        return .{ msg_type, complete_msg[12..] };
+    } else {
+        try print("Received V2 message with invalid type {d}\n", .{ complete_msg[0] });
+        return error.ConnectionError;
+    }
 }
 
 fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
