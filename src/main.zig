@@ -139,21 +139,16 @@ fn recvV1MessageFull(conn: *const net.Server.Connection) !*BitcoinMessage {
     return &msg;
 }
 
-fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, message: []u8, aad: []u8) !void {
-    std.debug.assert(message.len <= MAX_PROTOCOL_MESSAGE_LENGTH); // TODO: check if this is the right limit
+fn bip324Send(conn: *const net.Server.Connection, send_l: *FSChaCha20, send_p: *FSChaCha20Poly1305, msg: []u8, aad: []u8) !void {
     var plain_len: [3]u8 = undefined;
-    var enc_len: [3]u8 = undefined;
-    std.mem.writeInt(u24, &plain_len, message.len, .little);
-    send_l.crypt(&plain_len, &enc_len);
-    const static_struct = struct {
-        var plain_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH]u8 = undefined;
-        var enc_payload: [1 + MAX_PROTOCOL_MESSAGE_LENGTH + 16]u8 = undefined;
-    };
-    static_struct.plain_payload[0] = 0;
-    @memcpy(static_struct.plain_payload[1..1+message.len], message);
-    send_p.encrypt(static_struct.plain_payload, static_struct.plain_payload[0..0], aad, static_struct.enc_payload);
-    try conn.writeAll(enc_len);
-    try conn.writeAll(static_struct.enc_payload);
+    std.mem.writeInt(u24, &plain_len, msg.len, .little);
+    var raw_bytes = try std.heap.page_allocator.alloc(u8, plain_len.len + 1 + msg.len + 16);
+    defer std.heap.page_allocator.destroy(raw_bytes);
+    send_l.crypt(&plain_len, raw_bytes[0..3]);
+    raw_bytes[4] = 0;
+    @memcpy(raw_bytes[4..4+msg.len], msg);
+    send_p.encrypt(raw_bytes[3..4+msg.len], &.{}, aad, raw_bytes[3..]);
+    try conn.writeAll(raw_bytes);
 }
 
 fn bip324Recv(conn: *const net.Server.Connection, recv_l: *FSChaCha20, recv_p: *FSChaCha20Poly1305, aad: []u8) ![]u8 {
