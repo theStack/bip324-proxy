@@ -26,6 +26,27 @@ var stdout_buf: [1024]u8 = undefined;
 var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
 const stdout = &stdout_writer.interface;
 
+const BitcoinMessage = struct {
+    msg_type_buf: [12]u8,
+    msg_type_len: usize = 0,
+    payload_buf: [MAX_PROTOCOL_MESSAGE_LENGTH]u8,
+    payload_len: usize = 0,
+
+    fn init(msg_type: []u8, payload: usize) BitcoinMessage {
+        var new: BitcoinMessage = undefined;
+        @memcpy(new.msg_type_buf[0..msg_type.len], msg_type);
+        @memset(new.msg_type_buf[msg_type.len..], 0);
+        new.msg_type_len = msg_type.len;
+        @memcpy(new.payload_buf[0..payload.len], payload);
+        new.payload_len = payload.len;
+        return new;
+    }
+
+    pub fn getMsgType(m: *const BitcoinMessage)    []u8 { return m.msg_type_buf[0..m.msg_type_len]; }
+    pub fn getMsgTypeRaw(m: *const BitcoinMessage) []u8 { return &m.msg_type_buf; }
+    pub fn getPayload(m: *const BitcoinMessage)    []u8 { return m.payload_buf[0..m.payload_buf_len]; }
+};
+
 fn print(comptime fmt: []const u8, args: anytype) !void {
     try stdout.print(fmt, args);
     try stdout.flush();
