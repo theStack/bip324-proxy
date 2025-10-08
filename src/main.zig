@@ -85,9 +85,9 @@ fn sendV1Message(conn: *const net.Stream, msg: *const BitcoinMessage) !void {
     try conn.writeAll(payload);
 }
 
-fn recvV1MessagePayload(conn: *const net.Server.Connection, msg: *BitcoinMessage) !void {
+fn recvV1MessagePayload(conn: *const net.Stream, msg: *BitcoinMessage) !void {
     var header: [8]u8 = undefined;
-    var n_read = try conn.stream.read(header[0..]); // TODO: use readAll?
+    var n_read = try conn.read(header[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == header.len); // XXX
 
@@ -98,7 +98,7 @@ fn recvV1MessagePayload(conn: *const net.Server.Connection, msg: *BitcoinMessage
     }
 
     const payload_ptr = msg.getPayloadPtr();
-    n_read = try conn.stream.read(payload_ptr[0..length]); // TODO: use readAll?
+    n_read = try conn.read(payload_ptr[0..length]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == length); // XXX
     msg.setPayloadLen(length);
@@ -110,9 +110,9 @@ fn recvV1MessagePayload(conn: *const net.Server.Connection, msg: *BitcoinMessage
     }
 }
 
-fn recvV1MessageFull(conn: *const net.Server.Connection) !*BitcoinMessage {
+fn recvV1MessageFull(conn: *const net.Stream) !*BitcoinMessage {
     var net_magic: [4]u8 = undefined;
-    var n_read = try conn.stream.read(net_magic[0..]); // TODO: use readAll?
+    var n_read = try conn.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == net_magic.len); // XXX
     if (!std.mem.eql(u8, net_magic, NET_MAGIC)) {
@@ -169,10 +169,10 @@ fn bip324Send(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: []u8
     try conn.writeAll(raw_bytes);
 }
 
-fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers, aad: []u8) ![]u8 {
+fn bip324Recv(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, aad: []const u8) ![]u8 {
     var enc_len: [3]u8 = undefined;
     var plain_len: [3]u8 = undefined;
-    var n_read = try conn.stream.read(&enc_len); // TODO: use readAll?
+    var n_read = try conn.read(&enc_len); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == plain_len.len); // XXX
     bip324_ciphers.recv_l.crypt(&enc_len, &plain_len);
@@ -184,12 +184,12 @@ fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers
 
     var decrypt_buffer = try std.heap.page_allocator.alloc(u8, 1 + len + 16);
     defer std.heap.page_allocator.free(decrypt_buffer[0..]);
-    n_read = try.conn.stream.read(decrypt_buffer); // TODO: use readAll?
+    n_read = try conn.read(decrypt_buffer); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == decrypt_buffer.len);
 
     // decrypt
-    var plain = try std.heap.page_allocator.alloc(u8, len);
+    var plain = try std.heap.page_allocator.alloc(u8, 1+len);
     errdefer std.heap.page_allocator.free(plain);
     const ret = bip324_ciphers.recv_p.decrypt(decrypt_buffer, aad, plain[0..], &.{});
     if (!ret) {
@@ -199,7 +199,7 @@ fn bip324Recv(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers
     if (plain[0] != 0) {
         try print("Received V2 message with invalid header version byte {x}\n", .{plain[0]});
     }
-    return plain;
+    return plain[1..];
 }
 
 fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
@@ -228,7 +228,7 @@ fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *
     try bip324Send(conn, bip324_ciphers, complete_msg, &.{});
 }
 
-fn recvV2Message(conn: *const net.Server.Connection, bip324_ciphers: *BIP324Ciphers) !*BitcoinMessage {
+fn recvV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers) !*BitcoinMessage {
     const complete_msg = try bip324Recv(conn, bip324_ciphers, &.{});
     defer std.heap.page_allocator.destroy(complete_msg);
     var msg_type: []u8 = &.{};
@@ -275,7 +275,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("\n", .{});
 
     var first_msg = BitcoinMessage.init("version", &.{});
-    try recvV1MessagePayload(proxy_server, &first_msg);
+    try recvV1MessagePayload(&proxy_server.stream, &first_msg);
     const msg_payload = first_msg.getPayload();
     try print("Version payload length: {d} bytes\n", .{msg_payload.len});
 
@@ -353,8 +353,10 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == 16); // XXX
     var garbage_term_found = false;
+    var partner_garbage: []u8 = undefined;
     for (0..4096) |i| {
         if (std.mem.eql(u8, garbage_and_term_buf[i..i+16], recv_garbage_terminator)) {
+            partner_garbage = garbage_and_term_buf[0..i];
             garbage_term_found = true;
             break;
         }
@@ -367,8 +369,13 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     } else {
         try print("NO, garbage terminator not found :(:(:(\n", .{});
     }
-
-    _ = session_id;
+    const empty = try bip324Recv(&proxy_client, &bip324_ciphers, partner_garbage);
+    defer std.heap.page_allocator.free(empty);
+    std.debug.assert(empty.len == 0);
+    try print("[=] Handshake phase finished, v2 connection established.\n", .{});
+    try print("[=] Session ID: {x}\n", .{session_id});
+    // TODO: forward p2p V2 version message
+    // TODO: receive p2p V2 version message
 }
 
 const ChaCha20 = struct {
@@ -538,7 +545,7 @@ const AEADChaCha20Poly1305 = struct {
         a.computeTag(aad, cipher[0 .. cipher.len - 16], cipher[cipher.len - 16..]);
     }
 
-    pub fn decrypt(a: *AEADChaCha20Poly1305, cipher: []u8, aad: []u8, nonce: [12]u8, plain1: []u8, plain2: []u8) bool {
+    pub fn decrypt(a: *AEADChaCha20Poly1305, cipher: []u8, aad: []const u8, nonce: [12]u8, plain1: []u8, plain2: []u8) bool {
         std.debug.assert(cipher.len == plain1.len + plain2.len + 16);
 
         // verify tag, using key from block 0
@@ -581,8 +588,6 @@ const FSChaCha20Poly1305 = struct {
             @memcpy(new_nonce[4..12], nonce[4..12]);
             fscp.aead.stream(new_nonce, &one_block);
             // switch keys
-            const nonceval = std.mem.readInt(u64, new_nonce[4..12], .little);
-            std.debug.print("8byte nonce val: {x}, new key: {x}\n", .{nonceval, one_block[0..32]});
             fscp.aead.setKey(one_block[0..32].*);
             //fscp.packet_counter = 0;
         }
@@ -596,7 +601,7 @@ const FSChaCha20Poly1305 = struct {
         fscp.nextPacket(nonce);
     }
 
-    pub fn decrypt(fscp: *FSChaCha20Poly1305, cipher: []u8, aad: []u8, plain1: []u8, plain2: []u8) bool {
+    pub fn decrypt(fscp: *FSChaCha20Poly1305, cipher: []u8, aad: []const u8, plain1: []u8, plain2: []u8) bool {
         var nonce: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0,0};
         std.mem.writeInt(u32, nonce[0..4], fscp.packet_counter % fscp.rekey_interval, .little);
         std.mem.writeInt(u64, nonce[4..12], fscp.packet_counter / fscp.rekey_interval, .little);
