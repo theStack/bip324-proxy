@@ -132,7 +132,7 @@ fn recvV1MessageFull(conn: *const net.Stream) !*BitcoinMessage {
         print("{x} ", .{b});
     }
     print("\n", .{});
-    var msg = std.heap.page_allocator.create(BitcoinMessage);
+    var msg = try std.heap.page_allocator.create(BitcoinMessage);
     errdefer std.heap.page_allocator.destroy(msg);
     msg.* = BitcoinMessage.init(msg_type, *.{});
     try recvV1MessagePayload(conn, &msg);
@@ -163,7 +163,7 @@ fn bip324Send(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: []u8
     var raw_bytes = try std.heap.page_allocator.alloc(u8, plain_len.len + 1 + msg.len + 16);
     defer std.heap.page_allocator.free(raw_bytes);
     bip324_ciphers.send_l.crypt(&plain_len, raw_bytes[0..3]);
-    raw_bytes[4] = 0;
+    raw_bytes[3] = 0;
     @memcpy(raw_bytes[4..4+msg.len], msg);
     bip324_ciphers.send_p.encrypt(raw_bytes[3..4+msg.len], &.{}, aad, raw_bytes[3..]);
     try conn.writeAll(raw_bytes);
@@ -199,7 +199,7 @@ fn bip324Recv(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, aad: []co
     if (plain[0] != 0) {
         try print("Received V2 message with invalid header version byte {x}\n", .{plain[0]});
     }
-    return plain[1..];
+    return plain;
 }
 
 fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *const BitcoinMessage) !void {
@@ -209,8 +209,8 @@ fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *
     var header_buf: [13]u8 = [_]u8{0} ** 13;
     var header: []u8 = &.{};
     for (0..BIP324_SHORTID_MSGTYPES.len) |i| {
-        if (std.mem.eql(BIP324_SHORTID_MSGTYPES[i], msg_type)) {
-            header_buf[0] = i+1;
+        if (std.mem.eql(u8, BIP324_SHORTID_MSGTYPES[i], msg_type)) {
+            header_buf[0] = @intCast(i+1);
             header = header_buf[0..1];
             break;
         }
@@ -221,7 +221,7 @@ fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *
         header = &header_buf;
     }
 
-    var complete_msg = try std.heap.page_allocator.alloc(u8, header.len + payload.getPayload().len);
+    var complete_msg = try std.heap.page_allocator.alloc(u8, header.len + payload.len);
     defer std.heap.page_allocator.free(complete_msg);
     @memcpy(complete_msg[0..header.len], header);
     @memcpy(complete_msg[header.len..header.len+payload.len], payload);
@@ -229,9 +229,10 @@ fn sendV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: *
 }
 
 fn recvV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers) !*BitcoinMessage {
-    const complete_msg = try bip324Recv(conn, bip324_ciphers, &.{});
-    defer std.heap.page_allocator.destroy(complete_msg);
-    var msg_type: []u8 = &.{};
+    const complete_msg_with_header_byte = try bip324Recv(conn, bip324_ciphers, &.{});
+    defer std.heap.page_allocator.free(complete_msg_with_header_byte);
+    const complete_msg = complete_msg_with_header_byte[1..];
+    var msg_type: []const u8 = &.{};
     var payload: []u8 = &.{};
     if (1 <= complete_msg[0] and complete_msg[0] <= BIP324_SHORTID_MSGTYPES.len) {
         msg_type = BIP324_SHORTID_MSGTYPES[complete_msg[0]-1];
@@ -246,7 +247,7 @@ fn recvV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers) !*Bitc
         try print("Received V2 message with invalid type {d}\n", .{ complete_msg[0] });
         return error.ConnectionError;
     }
-    const msg = std.heap.page_allocator.create(BitcoinMessage);
+    const msg = try std.heap.page_allocator.create(BitcoinMessage);
     msg.* = BitcoinMessage.init(msg_type, payload);
     return msg;
 }
@@ -371,11 +372,14 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     }
     const empty = try bip324Recv(&proxy_client, &bip324_ciphers, partner_garbage);
     defer std.heap.page_allocator.free(empty);
-    std.debug.assert(empty.len == 0);
+    std.debug.assert(empty.len == 1);
     try print("[=] Handshake phase finished, v2 connection established.\n", .{});
     try print("[=] Session ID: {x}\n", .{session_id});
-    // TODO: forward p2p V2 version message
-    // TODO: receive p2p V2 version message
+    // - forward initial VERSION message
+    try sendV2Message(&proxy_client, &bip324_ciphers, &first_msg);
+    try print("initial VERSION message sent.\n", .{});
+    const remote_version = try recvV2Message(&proxy_client, &bip324_ciphers);
+    try print("!!! received message type {s} from remote v2 peer !!!\n", .{remote_version.getMsgType()});
 }
 
 const ChaCha20 = struct {
@@ -695,6 +699,5 @@ pub fn main() !void {
     }
 }
 
-// TODO: receive initial V2 version message
 // TODO: implement actual proxy select() loop, converting in both v1/v2 directions
 // TODO: remove crypto testing code, if it works
