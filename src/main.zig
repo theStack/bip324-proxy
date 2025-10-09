@@ -9,7 +9,8 @@ const s = @cImport({
     @cInclude("secp256k1_ellswift.h");
 });
 const c = @cImport({
-    @cInclude("sys/select.h");
+    @cInclude("poll.h");
+    @cInclude("unistd.h");
 });
 
 const BIP324_PROXY_PORT: u16 = 1324;
@@ -388,11 +389,23 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
 
 fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.Stream,
             bip324_ciphers: *BIP324Ciphers) !void {
-    _ = local_connection;
-    _ = remote_connection;
     _ = bip324_ciphers;
+
+    // setup pollfd array
+    var fds: [2]c.struct_pollfd = .{
+        .{ .fd = local_connection.handle, .events = c.POLLIN, .revents = 0 },
+        .{ .fd = remote_connection.handle, .events = c.POLLIN, .revents = 0 },
+    };
+
     while (true) {
-        // TODO: select() on both connections
+        const ret = c.poll(&fds[0], fds.len, 1000);
+        if (ret == 0) {
+            try print("Timeout. No data.\n", .{});
+            continue;
+        } else if (ret < 0) {
+            return error.PollFailed;
+        }
+
         // TODO: forward [local] v1 ---> v2 [remote]
         // TODO: forward [local] v2 <--- v2 [remote]
     }
