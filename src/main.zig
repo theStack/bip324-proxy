@@ -101,10 +101,12 @@ fn recvV1MessagePayload(conn: *const net.Stream, msg: *BitcoinMessage) !void {
         return error.ConnectionClosed;
     }
 
-    const payload_ptr = msg.getPayloadPtr();
-    n_read = try conn.read(payload_ptr[0..length]); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == length); // XXX
+    if (length > 0) {
+        const payload_ptr = msg.getPayloadPtr();
+        n_read = try conn.read(payload_ptr[0..length]); // TODO: use readAll?
+        if (n_read == 0) return error.ConnectionClosed;
+        std.debug.assert(n_read == length); // XXX
+    }
     msg.setPayloadLen(length);
 
     const checksum = header[4..8];
@@ -131,11 +133,6 @@ fn recvV1MessageFull(conn: *const net.Stream) !*BitcoinMessage {
     while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
         msg_type = msg_type[0..msg_type.len-1];
     }
-    try print("msgtype: ", .{});
-    for (msg_type) |b| {
-        try print("{x} ", .{b});
-    }
-    try print("\n", .{});
     const msg = try std.heap.page_allocator.create(BitcoinMessage);
     errdefer std.heap.page_allocator.destroy(msg);
     msg.* = BitcoinMessage.init(msg_type, &.{});
@@ -406,18 +403,20 @@ fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.S
 
         // forward [local] v1 ---> v2 [remote]
         if ((fds[0].revents & c.POLLIN) != 0) {
+            try print("got some v1 msg\n", .{});
             const local_msg = try recvV1MessageFull(local_connection);
             defer std.heap.page_allocator.destroy(local_msg);
-            try sendV2Message(remote_connection, bip324_ciphers, local_msg);
             try print("[-->] Received v1 \'{s}\', {d} bytes payload\n", .{local_msg.getMsgType(), local_msg.getPayload().len});
+            try sendV2Message(remote_connection, bip324_ciphers, local_msg);
         }
 
-        // forward [local] v2 <--- v2 [remote]
+        // forward [local] v1 <--- v2 [remote]
         if ((fds[1].revents & c.POLLIN) != 0) {
+            try print("got some v2 msg\n", .{});
             const remote_msg = try recvV2Message(remote_connection, bip324_ciphers);
             defer std.heap.page_allocator.destroy(remote_msg);
-            try sendV1Message(local_connection, remote_msg);
             try print("[<--] Received v2 \'{s}\', {d} bytes payload\n", .{remote_msg.getMsgType(), remote_msg.getPayload().len});
+            try sendV1Message(local_connection, remote_msg);
         }
     }
 }
