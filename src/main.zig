@@ -47,7 +47,7 @@ const BitcoinMessage = struct {
     }
 
     pub fn getMsgType(m: *const BitcoinMessage)    []u8 { return m.msg_type; }
-    pub fn getMsgTypeRaw(m: *const BitcoinMessage) []u8 { return &m.msg_type_buf; }
+    pub fn getMsgTypeRaw(m: *const BitcoinMessage) []const u8 { return &m.msg_type_buf; }
     pub fn getPayload(m: *const BitcoinMessage)    []u8 { return m.payload; }
     pub fn getPayloadPtr(m: *BitcoinMessage) *[MAX_PROTOCOL_MESSAGE_LENGTH]u8  { return &m.payload_buf; }
     pub fn setPayloadLen(m: *BitcoinMessage, len: usize) void {
@@ -81,11 +81,11 @@ fn sendV1Message(conn: *const net.Stream, msg: *const BitcoinMessage) !void {
     const payload = msg.getPayload();
 
     var header: [24]u8 = undefined;
-    @memcpy(header[0..4], NET_MAGIC);
+    @memcpy(header[0..4], &NET_MAGIC);
     @memcpy(header[4..16], msg_type_raw);
-    std.mem.writeInt(u32, header[16..20], payload.len, .little);
+    std.mem.writeInt(u32, header[16..20], @intCast(payload.len), .little);
     @memcpy(header[20..24], &doubleSha256Prefix(payload));
-    try conn.writeAll(header);
+    try conn.writeAll(&header);
     try conn.writeAll(payload);
 }
 
@@ -119,28 +119,28 @@ fn recvV1MessageFull(conn: *const net.Stream) !*BitcoinMessage {
     var n_read = try conn.read(net_magic[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
     std.debug.assert(n_read == net_magic.len); // XXX
-    if (!std.mem.eql(u8, net_magic, NET_MAGIC)) {
+    if (!std.mem.eql(u8, &net_magic, &NET_MAGIC)) {
         try print("Received V1 message with wrong NET_MAGIC\n", .{});
         return error.ConnectionClosed;
     }
 
     var msg_type_buf: [12]u8 = undefined;
-    n_read = try conn.stream.readAll(msg_type_buf[0..]);
+    n_read = try conn.read(msg_type_buf[0..]); // TODO: use readAll?
     if (n_read == 0) return error.ConnectionClosed;
-    var msg_type = msg_type_buf[0..];
+    var msg_type: []u8 = msg_type_buf[0..];
     while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
         msg_type = msg_type[0..msg_type.len-1];
     }
-    print("msgtype: ", .{});
+    try print("msgtype: ", .{});
     for (msg_type) |b| {
-        print("{x} ", .{b});
+        try print("{x} ", .{b});
     }
-    print("\n", .{});
-    var msg = try std.heap.page_allocator.create(BitcoinMessage);
+    try print("\n", .{});
+    const msg = try std.heap.page_allocator.create(BitcoinMessage);
     errdefer std.heap.page_allocator.destroy(msg);
-    msg.* = BitcoinMessage.init(msg_type, *.{});
-    try recvV1MessagePayload(conn, &msg);
-    return &msg;
+    msg.* = BitcoinMessage.init(msg_type, &.{});
+    try recvV1MessagePayload(conn, msg);
+    return msg;
 }
 
 const BIP324Ciphers = struct {
@@ -242,11 +242,11 @@ fn recvV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers) !*Bitc
         msg_type = BIP324_SHORTID_MSGTYPES[complete_msg[0]-1];
         payload = complete_msg[1..];
     } else if (complete_msg[0] == 0) {
-        msg_type = complete_msg[0..12];
+        msg_type = complete_msg[1..13];
         while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
             msg_type = msg_type[0..msg_type.len-1];
         }
-        payload = complete_msg[12..];
+        payload = complete_msg[13..];
     } else {
         try print("Received V2 message with invalid type {d}\n", .{ complete_msg[0] });
         return error.ConnectionError;
@@ -389,8 +389,6 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
 
 fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.Stream,
             bip324_ciphers: *BIP324Ciphers) !void {
-    _ = bip324_ciphers;
-
     // setup pollfd array
     var fds: [2]c.struct_pollfd = .{
         .{ .fd = local_connection.handle, .events = c.POLLIN, .revents = 0 },
@@ -406,8 +404,21 @@ fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.S
             return error.PollFailed;
         }
 
-        // TODO: forward [local] v1 ---> v2 [remote]
-        // TODO: forward [local] v2 <--- v2 [remote]
+        // forward [local] v1 ---> v2 [remote]
+        if ((fds[0].revents & c.POLLIN) != 0) {
+            const local_msg = try recvV1MessageFull(local_connection);
+            defer std.heap.page_allocator.destroy(local_msg);
+            try sendV2Message(remote_connection, bip324_ciphers, local_msg);
+            try print("[-->] Received v1 \'{s}\', {d} bytes payload\n", .{local_msg.getMsgType(), local_msg.getPayload().len});
+        }
+
+        // forward [local] v2 <--- v2 [remote]
+        if ((fds[1].revents & c.POLLIN) != 0) {
+            const remote_msg = try recvV2Message(remote_connection, bip324_ciphers);
+            defer std.heap.page_allocator.destroy(remote_msg);
+            try sendV1Message(local_connection, remote_msg);
+            try print("[<--] Received v2 \'{s}\', {d} bytes payload\n", .{remote_msg.getMsgType(), remote_msg.getPayload().len});
+        }
     }
 }
 
@@ -728,5 +739,4 @@ pub fn main() !void {
     }
 }
 
-// TODO: implement actual proxy select() loop, converting in both v1/v2 directions
 // TODO: remove crypto testing code, if it works
