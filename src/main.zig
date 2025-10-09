@@ -8,6 +8,9 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 const s = @cImport({
     @cInclude("secp256k1_ellswift.h");
 });
+const c = @cImport({
+    @cInclude("sys/select.h");
+});
 
 const BIP324_PROXY_PORT: u16 = 1324;
 const NET_MAGIC: [4]u8 = .{0xf9,0xbe,0xb4,0xd9}; // mainnet
@@ -377,9 +380,22 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("[=] Session ID: {x}\n", .{session_id});
     // - forward initial VERSION message
     try sendV2Message(&proxy_client, &bip324_ciphers, &first_msg);
-    try print("initial VERSION message sent.\n", .{});
-    const remote_version = try recvV2Message(&proxy_client, &bip324_ciphers);
-    try print("!!! received message type {s} from remote v2 peer !!!\n", .{remote_version.getMsgType()});
+    try print("initial VERSION message forwarded to remote.\n", .{});
+    //const remote_version = try recvV2Message(&proxy_client, &bip324_ciphers);
+    //try print("!!! received message type {s} from remote v2 peer !!!\n", .{remote_version.getMsgType()});
+    try mainLoop(&proxy_server.stream, &proxy_client, &bip324_ciphers);
+}
+
+fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.Stream,
+            bip324_ciphers: *BIP324Ciphers) !void {
+    _ = local_connection;
+    _ = remote_connection;
+    _ = bip324_ciphers;
+    while (true) {
+        // TODO: select() on both connections
+        // TODO: forward [local] v1 ---> v2 [remote]
+        // TODO: forward [local] v2 <--- v2 [remote]
+    }
 }
 
 const ChaCha20 = struct {
@@ -397,69 +413,69 @@ const ChaCha20 = struct {
         };
     }
 
-    pub fn setKey(c: *ChaCha20, key: [32]u8) void {
-        c.key = key;
-        c.bufleft = 0;
+    pub fn setKey(ch: *ChaCha20, key: [32]u8) void {
+        ch.key = key;
+        ch.bufleft = 0;
     }
 
-    pub fn seek(c: *ChaCha20, nonce: [12]u8, block_counter: u32) void {
-        c.nonce = nonce;
-        c.block_counter = block_counter;
-        c.bufleft = 0;
+    pub fn seek(ch: *ChaCha20, nonce: [12]u8, block_counter: u32) void {
+        ch.nonce = nonce;
+        ch.block_counter = block_counter;
+        ch.bufleft = 0;
     }
 
-    pub fn crypt(c: *ChaCha20, in_: []const u8, out_: []u8) void {
+    pub fn crypt(ch: *ChaCha20, in_: []const u8, out_: []u8) void {
         var in = in_;
         var out = out_;
         std.debug.assert(in.len == out.len);
 
         if (in.len == 0) return;
-        if (c.bufleft > 0) {
-            const reuse = @min(c.bufleft, in.len);
+        if (ch.bufleft > 0) {
+            const reuse = @min(ch.bufleft, in.len);
             for (0..reuse) |i| {
-                out[i] = in[i] ^ c.buffer[64 - c.bufleft + i];
+                out[i] = in[i] ^ ch.buffer[64 - ch.bufleft + i];
             }
-            c.bufleft -= reuse;
+            ch.bufleft -= reuse;
             out = out[reuse..];
             in = in[reuse..];
         }
         if (in.len >= 64) {
             const blocks: u64 = in.len / 64;
-            chacha.ChaCha20IETF.xor(out[0 .. blocks * 64], in[0 .. blocks * 64], c.block_counter, c.key, c.nonce);
-            c.block_counter += @intCast(blocks);
+            chacha.ChaCha20IETF.xor(out[0 .. blocks * 64], in[0 .. blocks * 64], ch.block_counter, ch.key, ch.nonce);
+            ch.block_counter += @intCast(blocks);
             out = out[64 * blocks ..];
             in = in[64 * blocks ..];
         }
         if (in.len > 0) {
-            chacha.ChaCha20IETF.stream(&c.buffer, c.block_counter, c.key, c.nonce);
-            c.block_counter += 1;
+            chacha.ChaCha20IETF.stream(&ch.buffer, ch.block_counter, ch.key, ch.nonce);
+            ch.block_counter += 1;
             for (0..in.len) |i| {
-                out[i] = in[i] ^ c.buffer[i];
+                out[i] = in[i] ^ ch.buffer[i];
             }
-            c.bufleft = 64 - in.len;
+            ch.bufleft = 64 - in.len;
         }
     }
 
-    pub fn stream(c: *ChaCha20, out_: []u8) void {
+    pub fn stream(ch: *ChaCha20, out_: []u8) void {
         var out = out_;
         if (out.len == 0) return;
-        if (c.bufleft > 0) {
-            const reuse = @min(c.bufleft, out.len);
-            @memcpy(out[0..reuse], c.buffer[c.buffer.len - c.bufleft .. c.buffer.len - c.bufleft + reuse]);
-            c.bufleft -= reuse;
+        if (ch.bufleft > 0) {
+            const reuse = @min(ch.bufleft, out.len);
+            @memcpy(out[0..reuse], ch.buffer[ch.buffer.len - ch.bufleft .. ch.buffer.len - ch.bufleft + reuse]);
+            ch.bufleft -= reuse;
             out = out[reuse..];
         }
         if (out.len >= 64) {
             const blocks = out.len / 64;
-            chacha.ChaCha20IETF.stream(out[0 .. blocks * 64], c.block_counter, c.key, c.nonce);
-            c.block_counter += @intCast(blocks);
+            chacha.ChaCha20IETF.stream(out[0 .. blocks * 64], ch.block_counter, ch.key, ch.nonce);
+            ch.block_counter += @intCast(blocks);
             out = out[64 * blocks ..];
         }
         if (out.len > 0) {
-            chacha.ChaCha20IETF.stream(&c.buffer, c.block_counter, c.key, c.nonce);
-            c.block_counter += 1;
-            @memcpy(out, c.buffer[0 .. out.len]);
-            c.bufleft = 64 - out.len;
+            chacha.ChaCha20IETF.stream(&ch.buffer, ch.block_counter, ch.key, ch.nonce);
+            ch.block_counter += 1;
+            @memcpy(out, ch.buffer[0 .. out.len]);
+            ch.bufleft = 64 - out.len;
         }
     }
 };
