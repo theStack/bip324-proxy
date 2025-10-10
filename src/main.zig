@@ -183,7 +183,7 @@ fn bip324Recv(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, aad: []co
     const len = std.mem.readInt(u24, &plain_len, .little);
     const MAX_CONTENTS_LEN = 1 + 12 + MAX_PROTOCOL_MESSAGE_LENGTH;
     if (len > MAX_CONTENTS_LEN) {
-        try print("Received V2 message too large payload size (4 MB)\n", .{});
+        try print("Received V2 message too large payload size ({d} bytes)\n", .{len});
         return error.ConnectionClosed;
     }
 
@@ -496,8 +496,8 @@ const ChaCha20 = struct {
 const FSChaCha20 = struct {
     chacha20: ChaCha20,
     rekey_interval: u64,
-    chunk_counter: u64 = 0,
-    // TODO: introduce rekey_counter to avoid division
+    chunk_counter: u32 = 0,
+    rekey_counter: u64 = 0,
 
     pub fn init(key: [32]u8, rekey_interval: u32) FSChaCha20 {
         return FSChaCha20 {
@@ -516,7 +516,8 @@ const FSChaCha20 = struct {
             fsc.chacha20.stream(&new_key);
             fsc.chacha20.setKey(new_key);
             var nonce: [12]u8 = .{0,0,0,0,0,0,0,0,0,0,0,0};
-            std.mem.writeInt(u64, nonce[4..12], fsc.chunk_counter / fsc.rekey_interval, .little);
+            fsc.rekey_counter += 1;
+            std.mem.writeInt(u64, nonce[4..12], fsc.rekey_counter, .little);
             fsc.chacha20.seek(nonce, 0);
             fsc.chunk_counter = 0;
         }
