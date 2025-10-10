@@ -61,6 +61,19 @@ fn print(comptime fmt: []const u8, args: anytype) !void {
     try stdout.flush();
 }
 
+fn recvAll(conn: *const net.Stream, output: []u8) !void {
+    var out = output;
+    var total_read: usize = 0;
+    while (out.len > 0) {
+        const bytes_to_read = @min(out.len, 16384);
+        const n_read = try conn.read(out[0..bytes_to_read]);
+        if (n_read == 0) return error.ConnectionClosed;
+        out = out[n_read..];
+        total_read += n_read;
+    }
+    std.debug.assert(total_read == output.len);
+}
+
 fn doubleSha256Prefix(data: []u8) [4]u8 {
     var innerhash: [32]u8 = undefined;
     var resulthash: [32]u8 = undefined;
@@ -91,9 +104,7 @@ fn sendV1Message(conn: *const net.Stream, msg: *const BitcoinMessage) !void {
 
 fn recvV1MessagePayload(conn: *const net.Stream, msg: *BitcoinMessage) !void {
     var header: [8]u8 = undefined;
-    var n_read = try conn.read(header[0..]); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == header.len); // XXX
+    try recvAll(conn, header[0..]);
 
     const length: u32 = std.mem.readInt(u32, header[0..4], .little);
     if (length > MAX_PROTOCOL_MESSAGE_LENGTH) {
@@ -103,9 +114,7 @@ fn recvV1MessagePayload(conn: *const net.Stream, msg: *BitcoinMessage) !void {
 
     if (length > 0) {
         const payload_ptr = msg.getPayloadPtr();
-        n_read = try conn.read(payload_ptr[0..length]); // TODO: use readAll?
-        if (n_read == 0) return error.ConnectionClosed;
-        std.debug.assert(n_read == length); // XXX
+        try recvAll(conn, payload_ptr[0..length]);
     }
     msg.setPayloadLen(length);
 
@@ -118,17 +127,14 @@ fn recvV1MessagePayload(conn: *const net.Stream, msg: *BitcoinMessage) !void {
 
 fn recvV1MessageFull(conn: *const net.Stream) !*BitcoinMessage {
     var net_magic: [4]u8 = undefined;
-    var n_read = try conn.read(net_magic[0..]); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == net_magic.len); // XXX
+    try recvAll(conn, net_magic[0..]);
     if (!std.mem.eql(u8, &net_magic, &NET_MAGIC)) {
         try print("Received V1 message with wrong NET_MAGIC\n", .{});
         return error.ConnectionClosed;
     }
 
     var msg_type_buf: [12]u8 = undefined;
-    n_read = try conn.read(msg_type_buf[0..]); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
+    try recvAll(conn, msg_type_buf[0..]);
     var msg_type: []u8 = msg_type_buf[0..];
     while (msg_type.len > 0 and msg_type[msg_type.len-1] == 0) {
         msg_type = msg_type[0..msg_type.len-1];
@@ -173,21 +179,18 @@ fn bip324Send(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, msg: []u8
 fn bip324Recv(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers, aad: []const u8) ![]u8 {
     var enc_len: [3]u8 = undefined;
     var plain_len: [3]u8 = undefined;
-    var n_read = try conn.read(&enc_len); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == plain_len.len); // XXX
+    try recvAll(conn, &enc_len);
     bip324_ciphers.recv_l.crypt(&enc_len, &plain_len);
     const len = std.mem.readInt(u24, &plain_len, .little);
-    if (len > MAX_PROTOCOL_MESSAGE_LENGTH) {
+    const MAX_CONTENTS_LEN = 1 + 12 + MAX_PROTOCOL_MESSAGE_LENGTH;
+    if (len > MAX_CONTENTS_LEN) {
         try print("Received V2 message too large payload size (4 MB)\n", .{});
         return error.ConnectionClosed;
     }
 
     var decrypt_buffer = try std.heap.page_allocator.alloc(u8, 1 + len + 16);
     defer std.heap.page_allocator.free(decrypt_buffer[0..]);
-    n_read = try conn.read(decrypt_buffer); // TODO: use readAll?
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == decrypt_buffer.len);
+    try recvAll(conn, decrypt_buffer);
 
     // decrypt
     var plain = try std.heap.page_allocator.alloc(u8, 1+len);
@@ -263,8 +266,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("Received prefix bytes: ", .{});
     for (0..V1_PREFIX.len) |i| {
         var byte_buf: [1]u8 = undefined;
-        const n_read = try proxy_server.stream.read(&byte_buf);
-        if (n_read == 0) return error.ConnectionClosed;
+        try recvAll(&proxy_server.stream, &byte_buf);
         const byte = byte_buf[0];
         try print("{x} ", .{byte});
         if (byte != V1_PREFIX[i]) {
@@ -322,9 +324,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("our garbage sent!\n", .{});
     // - receive their pubkey
     var pubkey_theirs: [64]u8 = undefined;
-    var n_read = try proxy_client.read(pubkey_theirs[0..]);
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == 64);
+    try recvAll(&proxy_client, pubkey_theirs[0..]);
     try print("their pubkey received!\n", .{});
     // TODO: implement v1 fallback? probably not
     // - perform ECDH
@@ -351,9 +351,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("garbage aad sent!\n", .{});
     // - detect partner garbage
     var garbage_and_term_buf: [4095+16]u8 = undefined;
-    n_read = try proxy_client.read(garbage_and_term_buf[0..16]);
-    if (n_read == 0) return error.ConnectionClosed;
-    std.debug.assert(n_read == 16); // XXX
+    try recvAll(&proxy_client, garbage_and_term_buf[0..16]);
     var garbage_term_found = false;
     var partner_garbage: []u8 = undefined;
     for (0..4096) |i| {
@@ -362,9 +360,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
             garbage_term_found = true;
             break;
         }
-        n_read = try proxy_client.read(garbage_and_term_buf[i+16..i+16+1]);
-        if (n_read == 0) return error.ConnectionClosed;
-        std.debug.assert(n_read == 1); // XXX
+        try recvAll(&proxy_client, garbage_and_term_buf[i+16..i+16+1]);
     }
     if (garbage_term_found) {
         try print("YAY, garbage terminator found!\n", .{});
