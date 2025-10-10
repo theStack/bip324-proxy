@@ -10,7 +10,6 @@ const s = @cImport({
 });
 const c = @cImport({
     @cInclude("poll.h");
-    @cInclude("unistd.h");
 });
 
 const BIP324_PROXY_PORT: u16 = 1324;
@@ -256,7 +255,7 @@ fn recvV2Message(conn: *const net.Stream, bip324_ciphers: *BIP324Ciphers) !*Bitc
     return msg;
 }
 
-fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
+fn bip324ProxyHandler(proxy_server: *const net.Stream) !void {
     // peek into receiver buffer byte for byte to detect early if the first
     // incoming message is not a bitcoin p2p v1 message; in that case we can't
     // do anything (we wouldn't know the remote destination to send data to) and
@@ -266,7 +265,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("Received prefix bytes: ", .{});
     for (0..V1_PREFIX.len) |i| {
         var byte_buf: [1]u8 = undefined;
-        try recvAll(&proxy_server.stream, &byte_buf);
+        try recvAll(proxy_server, &byte_buf);
         const byte = byte_buf[0];
         try print("{x} ", .{byte});
         if (byte != V1_PREFIX[i]) {
@@ -279,7 +278,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     try print("\n", .{});
 
     var first_msg = BitcoinMessage.init("version", &.{});
-    try recvV1MessagePayload(&proxy_server.stream, &first_msg);
+    try recvV1MessagePayload(proxy_server, &first_msg);
     const msg_payload = first_msg.getPayload();
     try print("Version payload length: {d} bytes\n", .{msg_payload.len});
 
@@ -375,9 +374,7 @@ fn bip324ProxyHandler(proxy_server: *const net.Server.Connection) !void {
     // - forward initial VERSION message
     try sendV2Message(&proxy_client, &bip324_ciphers, &first_msg);
     try print("initial VERSION message forwarded to remote.\n", .{});
-    //const remote_version = try recvV2Message(&proxy_client, &bip324_ciphers);
-    //try print("!!! received message type {s} from remote v2 peer !!!\n", .{remote_version.getMsgType()});
-    try mainLoop(&proxy_server.stream, &proxy_client, &bip324_ciphers);
+    try mainLoop(proxy_server, &proxy_client, &bip324_ciphers);
 }
 
 fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.Stream,
@@ -391,7 +388,6 @@ fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.S
     while (true) {
         const ret = c.poll(&fds[0], fds.len, 1000);
         if (ret == 0) {
-            try print("Timeout. No data.\n", .{});
             continue;
         } else if (ret < 0) {
             return error.PollFailed;
@@ -399,7 +395,6 @@ fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.S
 
         // forward [local] v1 ---> v2 [remote]
         if ((fds[0].revents & c.POLLIN) != 0) {
-            try print("got some v1 msg\n", .{});
             const local_msg = try recvV1MessageFull(local_connection);
             defer std.heap.page_allocator.destroy(local_msg);
             try print("[-->] Received v1 \'{s}\', {d} bytes payload\n", .{local_msg.getMsgType(), local_msg.getPayload().len});
@@ -408,7 +403,6 @@ fn mainLoop(local_connection: *const net.Stream, remote_connection: *const net.S
 
         // forward [local] v1 <--- v2 [remote]
         if ((fds[1].revents & c.POLLIN) != 0) {
-            try print("got some v2 msg\n", .{});
             const remote_msg = try recvV2Message(remote_connection, bip324_ciphers);
             defer std.heap.page_allocator.destroy(remote_msg);
             try print("[<--] Received v2 \'{s}\', {d} bytes payload\n", .{remote_msg.getMsgType(), remote_msg.getPayload().len});
@@ -655,83 +649,18 @@ pub fn main() !void {
     try print(" BIP324 proxy server \n", .{});
     try print("---------------------\n", .{});
 
-    // // Forward secure ChaCha20
-    // TestFSChaCha20("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-    //                "0000000000000000000000000000000000000000000000000000000000000000",
-    //                256,
-    //                "a93df4ef03011f3db95f60d996e1785df5de38fc39bfcb663a47bb5561928349");
-
-    const key2: [32]u8 = ("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++
-                          "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").*;
-    const msg: [32]u8 = ("\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" ++
-                         "\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f").*;
-    var output: [32]u8 = undefined;
-    const rekey_interval: u32 = 256;
-    var fs = FSChaCha20.init(key2, rekey_interval);
-    for (0..rekey_interval) |_| {
-        fs.crypt(&msg, &output);
-    }
-    fs.crypt(&msg, &output);
-    try print("TEST FSChaCha20 result after key rotation: {x}\n", .{output});
-
     const server_addr = try net.Address.parseIp4("127.0.0.1", BIP324_PROXY_PORT);
     var server = try server_addr.listen(.{.reuse_address = true});
     defer server.deinit();
     try print("Waiting for incoming v1 connections on {f}...\n", .{server.listen_address});
-
-    // TestFSChaCha20Poly1305("8349b7a2690b63d01204800c288ff1138a1d473c832c90ea8b3fc102d0bb3adc"
-    //                        "44261b247c7c3d6760bfbe979d061c305f46d94c0582ac3099f0bf249f8cb234",
-    //                        "",
-    //                        "3bd2093fcbcb0d034d8c569583c5425c1a53171ea299f8cc3bbf9ae3530adfce",
-    //                        60000,
-    //                        "30a6757ff8439b975363f166a0fa0e36722ab35936abd704297948f45083f4d4"
-    //                        "99433137ce931f7fca28a0acd3bc30f57b550acbc21cbd45bbef0739d9caf30c"
-    //                        "14b94829deb27f0b1923a2af704ae5d6");
-    const plain: [64]u8 = ("\x83\x49\xb7\xa2\x69\x0b\x63\xd0\x12\x04\x80\x0c\x28\x8f\xf1\x13" ++
-                           "\x8a\x1d\x47\x3c\x83\x2c\x90\xea\x8b\x3f\xc1\x02\xd0\xbb\x3a\xdc" ++
-                           "\x44\x26\x1b\x24\x7c\x7c\x3d\x67\x60\xbf\xbe\x97\x9d\x06\x1c\x30" ++
-                           "\x5f\x46\xd9\x4c\x05\x82\xac\x30\x99\xf0\xbf\x24\x9f\x8c\xb2\x34").*;
-    const aad: []u8 = &[_]u8{};
-    const newkey: [32]u8 = ("\x3b\xd2\x09\x3f\xcb\xcb\x0d\x03\x4d\x8c\x56\x95\x83\xc5\x42\x5c" ++
-                            "\x1a\x53\x17\x1e\xa2\x99\xf8\xcc\x3b\xbf\x9a\xe3\x53\x0a\xdf\xce").*;
-    const msg_idx: u64 = 60000;
-    var cipher: [80]u8 = undefined;
-
-    var dummy_tag: [16]u8 = undefined;
-    var fscp = FSChaCha20Poly1305.init(newkey, 224);
-    // dummy encryptions first
-    for (0..msg_idx) |_| {
-        fscp.encrypt(&.{}, &.{}, &.{}, &dummy_tag);
-    }
-    try print("dummy tag after all iterations: {x}\n", .{dummy_tag});
-    // single encrypt
-    fscp.encrypt(&plain, &.{}, aad, &cipher);
-    //fscp.encrypt(&.{}, &plain, aad, &cipher);
-    try print("TEST FSChaCha20Poly1305 result after single encryption: {x}\n", .{cipher});
-
-    // dummy decryptions
-    var fscp_dec = FSChaCha20Poly1305.init(newkey, 224);
-    for (0..msg_idx) |_| {
-        //try print("iteration {d}\n", .{i});
-        _ = fscp_dec.decrypt(&dummy_tag, &.{}, &.{}, &.{});
-        //try print("done\n", .{});
-        //std.debug.assert(ret);
-    }
-    var decipher: [64]u8 = undefined;
-    const ret = fscp_dec.decrypt(&cipher, aad, &decipher, &.{});
-    try print("ret ===== {}\n", .{ret});
-    const retret = std.mem.eql(u8, &decipher, &plain);
-    try print("retret ===== {}\n", .{retret});
 
     while (true) {
         const proxy_server = try server.accept();
         defer proxy_server.stream.close();
         try print("[<] New connection from {f}\n", .{proxy_server.address});
         // TODO: start this up in a new thread
-        bip324ProxyHandler(&proxy_server) catch {
+        bip324ProxyHandler(&proxy_server.stream) catch {
             try print("Connection was closed.\n", .{});
         };
     }
 }
-
-// TODO: remove crypto testing code, if it works
