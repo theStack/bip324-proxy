@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) !void {
     // build secp256k1 dependency via CMake
     const secp256k1_dep = b.dependency("secp256k1", .{});
     const secp256k1_root_dir = secp256k1_dep.path(".");
-    const secp256k1_build_dir = try secp256k1_root_dir.join(b.allocator, "build");
+    const secp256k1_build_dir = try secp256k1_root_dir.join(b.allocator, "secp256k1_build");
     const secp256k1_staticlib_file = try secp256k1_build_dir.join(b.allocator, "lib/libsecp256k1.a");
     const secp256k1_include_dir = try secp256k1_root_dir.join(b.allocator, "include");
 
